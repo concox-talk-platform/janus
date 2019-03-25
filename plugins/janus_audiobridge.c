@@ -39,6 +39,7 @@ room-<unique room ID>: {
 	audio_level_average = 25 (average value of audio level, 127=muted, 0='too loud', default=25)
 	record = true|false (whether this room should be recorded, default=false)
 	record_file =	/path/to/recording.wav (where to save the recording)
+
 		[The following lines are only needed if you want the mixed audio
 		to be automatically forwarded via plain RTP to an external component
 		(e.g., an ffmpeg script, or a gstreamer pipeline) for processing.
@@ -837,6 +838,7 @@ typedef struct janus_audiobridge_room {
 	janus_mutex rtp_mutex;		/* Mutex to lock the RTP forwarders list */
 	int rtp_udp_sock;			/* UDP socket to use to forward RTP packets */
 	janus_refcount ref;			/* Reference counter for this room */
+	guint64 talker;				/* Who own talk right */
 } janus_audiobridge_room;
 static GHashTable *rooms;
 static janus_mutex rooms_mutex = JANUS_MUTEX_INITIALIZER;
@@ -1816,6 +1818,7 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
 			}
 		}
 		audiobridge->room_id = room_id;
+		audiobridge->talker = 0;
 		char *description = NULL;
 		if(desc != NULL && strlen(json_string_value(desc)) > 0) {
 			description = g_strdup(json_string_value(desc));
@@ -2683,6 +2686,93 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
 		json_object_set_new(response, "audiobridge", json_string("forwarders"));
 		json_object_set_new(response, "room", json_integer(room_id));
 		json_object_set_new(response, "rtp_forwarders", list);
+		goto plugin_response;
+	} else if(!strcasecmp(request_text, "talk")) {
+		/* List all forwarders in a room */
+		JANUS_VALIDATE_JSON_OBJECT(root, room_parameters,
+			error_code, error_cause, TRUE,
+			JANUS_AUDIOBRIDGE_ERROR_MISSING_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_INVALID_ELEMENT);
+		if(error_code != 0)
+			goto plugin_response;
+		json_t *room = json_object_get(root, "room");
+		guint64 room_id = json_integer_value(room);
+		janus_mutex_lock(&rooms_mutex);
+		janus_audiobridge_room *audiobridge = g_hash_table_lookup(rooms, &room_id);
+		if(audiobridge == NULL) {
+			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
+			error_code = JANUS_AUDIOBRIDGE_ERROR_NO_SUCH_ROOM;
+			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
+			janus_mutex_unlock(&rooms_mutex);
+			goto plugin_response;
+		}
+		if(audiobridge->destroyed) {
+			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
+			error_code = JANUS_AUDIOBRIDGE_ERROR_NO_SUCH_ROOM;
+			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
+			janus_mutex_unlock(&rooms_mutex);
+			goto plugin_response;
+		}
+		/* A secret may be required for this action */
+		JANUS_CHECK_SECRET(audiobridge->room_secret, root, "secret", error_code, error_cause,
+			JANUS_AUDIOBRIDGE_ERROR_MISSING_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_INVALID_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_UNAUTHORIZED);
+		if(error_code != 0) {
+			janus_mutex_unlock(&rooms_mutex);
+			goto plugin_response;
+		}
+		response = json_object();
+		json_object_set_new(response, "talk", json_integer(audiobridge->talker));
+		json_object_set_new(response, "room", json_integer(room_id));
+        if(notify_events && gateway->events_is_enabled()) {
+            json_t *info = json_object();
+            json_object_set_new(info, "event", json_string("talked"));
+            json_object_set_new(info, "room", json_integer(room_id));
+            json_object_set_new(info, "id", json_integer(audiobridge->talker));
+            gateway->notify_event(&janus_audiobridge_plugin, session->handle, info);
+        }
+		goto plugin_response;
+	} else if(!strcasecmp(request_text, "untalk")) {
+		/* List all forwarders in a room */
+		JANUS_VALIDATE_JSON_OBJECT(root, room_parameters,
+			error_code, error_cause, TRUE,
+			JANUS_AUDIOBRIDGE_ERROR_MISSING_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_INVALID_ELEMENT);
+		if(error_code != 0)
+			goto plugin_response;
+		json_t *room = json_object_get(root, "room");
+		guint64 room_id = json_integer_value(room);
+		janus_mutex_lock(&rooms_mutex);
+		janus_audiobridge_room *audiobridge = g_hash_table_lookup(rooms, &room_id);
+		if(audiobridge == NULL) {
+			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
+			error_code = JANUS_AUDIOBRIDGE_ERROR_NO_SUCH_ROOM;
+			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
+			janus_mutex_unlock(&rooms_mutex);
+			goto plugin_response;
+		}
+		if(audiobridge->destroyed) {
+			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
+			error_code = JANUS_AUDIOBRIDGE_ERROR_NO_SUCH_ROOM;
+			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
+			janus_mutex_unlock(&rooms_mutex);
+			goto plugin_response;
+		}
+		/* A secret may be required for this action */
+		JANUS_CHECK_SECRET(audiobridge->room_secret, root, "secret", error_code, error_cause,
+			JANUS_AUDIOBRIDGE_ERROR_MISSING_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_INVALID_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_UNAUTHORIZED);
+		if(error_code != 0) {
+			janus_mutex_unlock(&rooms_mutex);
+			goto plugin_response;
+		}
+		response = json_object();
+		json_object_set_new(response, "talk", json_integer(0));
+		json_object_set_new(response, "room", json_integer(room_id));
+        if(notify_events && gateway->events_is_enabled()) {
+            json_t *info = json_object();
+            json_object_set_new(info, "event", json_string("untalked"));
+            json_object_set_new(info, "room", json_integer(room_id));
+            json_object_set_new(info, "id", json_integer(audiobridge->talker));
+            gateway->notify_event(&janus_audiobridge_plugin, session->handle, info);
+        }
+
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "join") || !strcasecmp(request_text, "configure")
 			|| !strcasecmp(request_text, "changeroom") || !strcasecmp(request_text, "leave")) {
