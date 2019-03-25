@@ -780,6 +780,18 @@ static struct janus_json_parameter stop_rtp_forward_parameters[] = {
 	{"stream_id", JSON_INTEGER, JANUS_JSON_PARAM_REQUIRED | JANUS_JSON_PARAM_POSITIVE}
 };
 
+static struct janus_json_parameter talk_parameters[] = {
+	{"room", JSON_INTEGER, JANUS_JSON_PARAM_REQUIRED | JANUS_JSON_PARAM_POSITIVE},
+    {"id", JSON_INTEGER, JANUS_JSON_PARAM_REQUIRED | JANUS_JSON_PARAM_POSITIVE},
+    {"secret", JSON_STRING, 0},
+};
+
+static struct janus_json_parameter untalk_parameters[] = {
+	{"room", JSON_INTEGER, JANUS_JSON_PARAM_REQUIRED | JANUS_JSON_PARAM_POSITIVE},
+    {"id", JSON_INTEGER, JANUS_JSON_PARAM_REQUIRED | JANUS_JSON_PARAM_POSITIVE},
+    {"secret", JSON_STRING, 0},
+};
+
 /* Static configuration instance */
 static janus_config *config = NULL;
 static const char *config_folder = NULL;
@@ -1727,6 +1739,7 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
 	json_t *request = json_object_get(root, "request");
 	/* Some requests ('create', 'destroy', 'exists', 'list') can be handled synchronously */
 	const char *request_text = json_string_value(request);
+    JANUS_LOG(LOG_ERR, "request_text:%s\n",request_text);
 	if(!strcasecmp(request_text, "create")) {
 		/* Create a new audiobridge */
 		JANUS_LOG(LOG_VERB, "Creating a new audiobridge\n");
@@ -2688,8 +2701,7 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
 		json_object_set_new(response, "rtp_forwarders", list);
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "talk")) {
-		/* List all forwarders in a room */
-		JANUS_VALIDATE_JSON_OBJECT(root, room_parameters,
+		JANUS_VALIDATE_JSON_OBJECT(root, talk_parameters,
 			error_code, error_cause, TRUE,
 			JANUS_AUDIOBRIDGE_ERROR_MISSING_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
@@ -2719,20 +2731,26 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
+        json_t *user = json_object_get(root, "id");
+        guint64 user_id = json_integer_value(user);
+        if (audiobridge->talker == 0 || audiobridge->talker == user_id ) {  //抢麦成功
+            audiobridge->talker  = user_id;
+            if(notify_events && gateway->events_is_enabled()) {
+                json_t *info = json_object();
+                json_object_set_new(info, "event", json_string("talked"));
+                json_object_set_new(info, "room", json_integer(room_id));
+                json_object_set_new(info, "id", json_integer(audiobridge->talker));
+                gateway->notify_event(&janus_audiobridge_plugin, session->handle, info);
+            }
+        }
+        janus_mutex_unlock(&rooms_mutex);
+
 		response = json_object();
 		json_object_set_new(response, "talk", json_integer(audiobridge->talker));
 		json_object_set_new(response, "room", json_integer(room_id));
-        if(notify_events && gateway->events_is_enabled()) {
-            json_t *info = json_object();
-            json_object_set_new(info, "event", json_string("talked"));
-            json_object_set_new(info, "room", json_integer(room_id));
-            json_object_set_new(info, "id", json_integer(audiobridge->talker));
-            gateway->notify_event(&janus_audiobridge_plugin, session->handle, info);
-        }
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "untalk")) {
-		/* List all forwarders in a room */
-		JANUS_VALIDATE_JSON_OBJECT(root, room_parameters,
+		JANUS_VALIDATE_JSON_OBJECT(root, untalk_parameters,
 			error_code, error_cause, TRUE,
 			JANUS_AUDIOBRIDGE_ERROR_MISSING_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
@@ -2762,17 +2780,23 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
-		response = json_object();
-		json_object_set_new(response, "talk", json_integer(0));
-		json_object_set_new(response, "room", json_integer(room_id));
-        if(notify_events && gateway->events_is_enabled()) {
-            json_t *info = json_object();
-            json_object_set_new(info, "event", json_string("untalked"));
-            json_object_set_new(info, "room", json_integer(room_id));
-            json_object_set_new(info, "id", json_integer(audiobridge->talker));
-            gateway->notify_event(&janus_audiobridge_plugin, session->handle, info);
+        json_t *user = json_object_get(root, "id");
+        guint64 user_id = json_integer_value(user);
+        if (user_id == audiobridge->talker) {   //放麦成功
+            audiobridge->talker  = 0;
+            if(notify_events && gateway->events_is_enabled()) {
+                json_t *info = json_object();
+                json_object_set_new(info, "event", json_string("untalked"));
+                json_object_set_new(info, "room", json_integer(room_id));
+                json_object_set_new(info, "id", json_integer(audiobridge->talker));
+                gateway->notify_event(&janus_audiobridge_plugin, session->handle, info);
+            }
         }
+        janus_mutex_unlock(&rooms_mutex);
 
+		response = json_object();
+		json_object_set_new(response, "untalk", json_integer(audiobridge->talker));
+		json_object_set_new(response, "room", json_integer(room_id));
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "join") || !strcasecmp(request_text, "configure")
 			|| !strcasecmp(request_text, "changeroom") || !strcasecmp(request_text, "leave")) {
