@@ -20,7 +20,7 @@
 // If you want to use the WebSockets frontend to Janus, instead, you'll
 // have to pass a different kind of address, e.g.:
 //
-// 		var server = "ws://" + window.location.hostname + ":8188";
+ 		var server = "ws://" + "113.105.153.240" + ":9188";
 //
 // Of course this assumes that support for WebSockets has been built in
 // when compiling the server. WebSockets support has not been tested
@@ -42,11 +42,11 @@
 // in the presented order. The first working server will be used for
 // the whole session.
 //
-var server = null;
-if(window.location.protocol === 'http:')
-	server = "http://" + window.location.hostname + ":8088/janus";
-else
-	server = "https://" + window.location.hostname + ":8089/janus";
+//var server = null;
+//if(window.location.protocol === 'http:')
+//	server = "http://" + window.location.hostname + ":8088/janus";
+//else
+//	server = "https://" + window.location.hostname + ":8089/janus";
 
 var janus = null;
 var mixertest = null;
@@ -91,6 +91,10 @@ $(document).ready(function() {
 									$('#registernow').removeClass('hide').show();
 									$('#register').click(registerUsername);
 									$('#username').focus();
+									$('#talk').click(talk);
+									$('#untalk').click(untalk);
+									$('#list').click(list);
+									$('#sendjson').click(sendjson);
 									$('#start').removeAttr('disabled').html("Stop")
 										.click(function() {
 											$(this).attr('disabled', true);
@@ -366,4 +370,28 @@ function registerUsername() {
 		myusername = username;
 		mixertest.send({"message": register});
 	}
+}
+
+function talk() {
+	var register = { "request": "talk", room: myroom, "secret": "adminpwd", "id" : myid };
+	mixertest.send({"message": register});
+}
+
+function untalk() {
+	var register = { "request": "untalk", room: myroom, "secret": "adminpwd", "id" : myid };
+	mixertest.send({"message": register});
+}
+
+function list() {
+	var register = { "request": "listparticipants", room: myroom};
+	mixertest.send({"message": register});
+}
+
+function sendjson() {
+	var jsonStr = document.getElementById("requestjson").value;
+	//alert(register);
+
+    var register = JSON.parse(jsonStr);//将字符串抓换成对象
+	//alert(register);
+	mixertest.send({message: register});
 }
