@@ -2724,6 +2724,14 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
+
+		// Need to add error_code for tallker already existed.
+		if(audiobridge->talker != 0) {
+			JANUS_LOG(LOG_INFO, "User (%"SCNu64") is the talker now\n", audiobridge->talker);
+			janus_mutex_unlock(&rooms_mutex);
+			goto plugin_response;
+		}
+
 		/* A secret may be required for this action */
 		JANUS_CHECK_SECRET(audiobridge->room_secret, root, "secret", error_code, error_cause,
 			JANUS_AUDIOBRIDGE_ERROR_MISSING_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_INVALID_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_UNAUTHORIZED);
@@ -2731,8 +2739,11 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
+
         json_t *user = json_object_get(root, "id");
         guint64 user_id = json_integer_value(user);
+
+		// Check the talk right hold? if not hold it.
         if (audiobridge->talker == 0 || audiobridge->talker == user_id ) {  //抢麦成功
             audiobridge->talker  = user_id;
             if(notify_events && gateway->events_is_enabled()) {
@@ -2742,6 +2753,26 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
                 json_object_set_new(info, "id", json_integer(audiobridge->talker));
                 gateway->notify_event(&janus_audiobridge_plugin, session->handle, info);
             }
+
+			// Tell everyone who hold talk right. added by xiej	
+			janus_refcount_increase(&audiobridge->ref);
+			json_t *event = json_object();
+			json_object_set_new(event, "audiobridge", json_string("event"));
+			json_object_set_new(event, "room", json_integer(audiobridge->room_id));
+			json_object_set_new(event, "talkholder", json_integer(user_id));
+			GHashTableIter iter;
+			gpointer value;
+			g_hash_table_iter_init(&iter, audiobridge->participants);
+			while (g_hash_table_iter_next(&iter, NULL, &value)) {
+				janus_audiobridge_participant *p = value;
+				if(p->user_id == audiobridge->talker) {
+					continue;	/* Skip the talking participant itself */
+				}
+				JANUS_LOG(LOG_VERB, "Notifying participant %"SCNu64" (%s)\n", p->user_id, p->display ? p->display : "??");
+				int ret = gateway->push_event(p->session->handle, &janus_audiobridge_plugin, NULL, event, NULL);
+				JANUS_LOG(LOG_VERB, "  >> %d (%s)\n", ret, janus_get_api_error(ret));
+			}
+			json_decref(event);
         }
         janus_mutex_unlock(&rooms_mutex);
 
@@ -2773,6 +2804,7 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
+
 		/* A secret may be required for this action */
 		JANUS_CHECK_SECRET(audiobridge->room_secret, root, "secret", error_code, error_cause,
 			JANUS_AUDIOBRIDGE_ERROR_MISSING_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_INVALID_ELEMENT, JANUS_AUDIOBRIDGE_ERROR_UNAUTHORIZED);
@@ -2780,8 +2812,18 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
-        json_t *user = json_object_get(root, "id");
+        
+		json_t *user = json_object_get(root, "id");
         guint64 user_id = json_integer_value(user);
+
+		// Useless request
+		if(audiobridge->talker == 0 || user_id != audiobridge->talker) {
+			JANUS_LOG(LOG_ERR, "(%"SCNu64") no right to untalk\n", user_id);
+			error_code = JANUS_AUDIOBRIDGE_ERROR_INVALID_REQUEST;
+			janus_mutex_unlock(&rooms_mutex);
+			goto plugin_response;
+		}
+
         if (user_id == audiobridge->talker) {   //放麦成功
             audiobridge->talker  = 0;
             if(notify_events && gateway->events_is_enabled()) {
@@ -2791,6 +2833,26 @@ struct janus_plugin_result *janus_audiobridge_handle_message(janus_plugin_sessio
                 json_object_set_new(info, "id", json_integer(audiobridge->talker));
                 gateway->notify_event(&janus_audiobridge_plugin, session->handle, info);
             }
+
+			// Tell everyone who freed talk right. added by xiej	
+			janus_refcount_increase(&audiobridge->ref);
+			json_t *event = json_object();
+			json_object_set_new(event, "audiobridge", json_string("event"));
+			json_object_set_new(event, "room", json_integer(audiobridge->room_id));
+			json_object_set_new(event, "talkfreed", json_integer(user_id));
+			GHashTableIter iter;
+			gpointer value;
+			g_hash_table_iter_init(&iter, audiobridge->participants);
+			while (g_hash_table_iter_next(&iter, NULL, &value)) {
+				janus_audiobridge_participant *p = value;
+				if(p->user_id == user_id) {
+					continue;	/* Skip the talking participant itself */
+				}
+				JANUS_LOG(LOG_VERB, "Notifying participant %"SCNu64" (%s)\n", p->user_id, p->display ? p->display : "??");
+				int ret = gateway->push_event(p->session->handle, &janus_audiobridge_plugin, NULL, event, NULL);
+				JANUS_LOG(LOG_VERB, "  >> %d (%s)\n", ret, janus_get_api_error(ret));
+			}
+			json_decref(event);
         }
         janus_mutex_unlock(&rooms_mutex);
 
