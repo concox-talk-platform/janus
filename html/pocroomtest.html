@@ -12,12 +12,12 @@
 <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/bootbox.js/4.1.0/bootbox.min.js"></script>
 <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/spin.js/2.3.2/spin.min.js"></script>
 <script type="text/javascript" src="janus.js" ></script>
-<script type="text/javascript" src="audiobridgetest.js"></script>
+<script type="text/javascript" src="pocroomtest.js"></script>
 <script>
 	$(function() {
 		$(".navbar-static-top").load("navbar.html", function() {
 			$(".navbar-static-top li.dropdown").addClass("active");
-			$(".navbar-static-top a[href='audiobridgetest.html']").parent().addClass("active");
+			$(".navbar-static-top a[href='pocroomtest.html']").parent().addClass("active");
 		});
 		$(".footer").load("footer.html");
 	});
@@ -39,7 +39,25 @@
 			<div class="page-header">
 				<h1>Plugin Demo: Audio Room (mixed)
 					<button class="btn btn-default" autocomplete="off" id="start">Start</button>
-				</h1>
+					<button class="btn btn-default" autocomplete="off" id="talk">Talk</button>
+					<button class="btn btn-default" autocomplete="off" id="untalk">UnTalk</button>
+					<button class="btn btn-default" autocomplete="off" id="list">List</button>
+					
+				</h1>	
+					<table border="0">
+						<tr>
+							<td>
+								requestjson：
+							</td>
+							<td>
+								<input id="requestjson" name="requestjson" type="text" />
+							</td>
+							<td>
+								<button class="btn btn-default" autocomplete="off" placeholder="Choose a display name" id="sendjson">sendjson</button>
+							</td>
+						</tr>			
+					</table>
+
 			</div>
 			<div class="container" id="details">
 				<div class="row">
@@ -47,7 +65,7 @@
 						<h3>Demo details</h3>
 						<p>The Audio Bridge demo is a simple example of how to implement
 						an audio conferencing application through Janus. Since it makes use
-						of the AudioBridge plugin, all the audio contributions will be mixed,
+						of the pocroom plugin, all the audio contributions will be mixed,
 						which means that a single PeerConnection will be created no matter
 						how many participants will join the room.</p>
 						<p>To try the demo, just insert a username to join the default audio

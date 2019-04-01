@@ -347,6 +347,16 @@ conf_DATA += conf/janus.plugin.audiobridge.jcfg.sample
 EXTRA_DIST += conf/janus.plugin.audiobridge.jcfg.sample
 endif
 
+if ENABLE_PLUGIN_POCROOM
+plugin_LTLIBRARIES += plugins/libjanus_pocroom.la
+plugins_libjanus_pocroom_la_SOURCES = plugins/janus_pocroom.c
+plugins_libjanus_pocroom_la_CFLAGS = $(plugins_cflags) $(OPUS_CFLAGS)
+plugins_libjanus_pocroom_la_LDFLAGS = $(plugins_ldflags) $(OPUS_LDFLAGS) $(OPUS_LIBS)
+plugins_libjanus_pocroom_la_LIBADD = $(plugins_libadd) $(OPUS_LIBADD)
+conf_DATA += conf/janus.plugin.pocroom.jcfg.sample
+EXTRA_DIST += conf/janus.plugin.pocroom.jcfg.sample
+endif
+
 if ENABLE_PLUGIN_ECHOTEST
 plugin_LTLIBRARIES += plugins/libjanus_echotest.la
 plugins_libjanus_echotest_la_SOURCES = plugins/janus_echotest.c

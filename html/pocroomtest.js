@@ -20,7 +20,7 @@
 // If you want to use the WebSockets frontend to Janus, instead, you'll
 // have to pass a different kind of address, e.g.:
 //
-// 		var server = "ws://" + window.location.hostname + ":8188";
+ 		var server = "ws://" + "113.105.153.240" + ":9188";
 //
 // Of course this assumes that support for WebSockets has been built in
 // when compiling the server. WebSockets support has not been tested
@@ -42,21 +42,21 @@
 // in the presented order. The first working server will be used for
 // the whole session.
 //
-var server = null;
-if(window.location.protocol === 'http:')
-	server = "http://" + window.location.hostname + ":8088/janus";
-else
-	server = "https://" + window.location.hostname + ":8089/janus";
+//var server = null;
+//if(window.location.protocol === 'http:')
+//	server = "http://" + window.location.hostname + ":8088/janus";
+//else
+//	server = "https://" + window.location.hostname + ":8089/janus";
 
 var janus = null;
 var mixertest = null;
-var opaqueId = "audiobridgetest-"+Janus.randomString(12);
+var opaqueId = "pocroomtest-"+Janus.randomString(12);
 
 var spinner = null;
 
 var myroom = 1234;	// Demo room
 var myusername = null;
-var myid = null;
+var myid = randomId();
 var webrtcUp = false;
 var audioenabled = false;
 
@@ -80,7 +80,7 @@ $(document).ready(function() {
 						// Attach to Audio Bridge test plugin
 						janus.attach(
 							{
-								plugin: "janus.plugin.audiobridge",
+								plugin: "janus.plugin.pocroom",
 								opaqueId: opaqueId,
 								success: function(pluginHandle) {
 									$('#details').remove();
@@ -91,6 +91,10 @@ $(document).ready(function() {
 									$('#registernow').removeClass('hide').show();
 									$('#register').click(registerUsername);
 									$('#username').focus();
+									$('#talk').click(talk);
+									$('#untalk').click(untalk);
+									$('#list').click(list);
+									$('#sendjson').click(sendjson);
 									$('#start').removeAttr('disabled').html("Stop")
 										.click(function() {
 											$(this).attr('disabled', true);
@@ -123,7 +127,7 @@ $(document).ready(function() {
 								onmessage: function(msg, jsep) {
 									Janus.debug(" ::: Got a message :::");
 									Janus.debug(msg);
-									var event = msg["audiobridge"];
+									var event = msg["pocroom"];
 									Janus.debug("Event: " + event);
 									if(event != undefined && event != null) {
 										if(event === "joined") {
@@ -247,7 +251,7 @@ $(document).ready(function() {
 													// This is a "no such room" error: give a more meaningful description
 													bootbox.alert(
 														"<p>Apparently room <code>" + myroom + "</code> (the one this demo uses as a test room) " +
-														"does not exist...</p><p>Do you have an updated <code>janus.plugin.audiobridge.cfg</code> " +
+														"does not exist...</p><p>Do you have an updated <code>janus.plugin.pocroom.cfg</code> " +
 														"configuration file? If not, make sure you copy the details of room <code>" + myroom + "</code> " +
 														"from that sample in your current configuration file, then restart Janus and try again."
 													);
@@ -367,3 +371,37 @@ function registerUsername() {
 		mixertest.send({"message": register});
 	}
 }
+
+function talk() {
+	alert(myid);
+	var register = { "request": "talk", "room": myroom, "secret": "adminpwd", "id" : myid };
+	mixertest.send({"message": register});
+}
+
+function untalk() {
+	alert(myid);
+	var register = { "request": "untalk", "room": myroom, "secret": "adminpwd", "id" : myid };
+	mixertest.send({"message": register});
+}
+
+function list() {
+	var register = { "request": "listparticipants", room: myroom};
+	mixertest.send({"message": register});
+}
+
+function sendjson() {
+	var jsonStr = document.getElementById("requestjson").value;
+	//alert(register);
+
+    var register = JSON.parse(jsonStr);//将字符串抓换成对象
+	//alert(register);
+	mixertest.send({message: register});
+}
+
+function randomId() { 
+	var t = ''; 
+	for(var i=0;i<16;i++){ 
+	t+=Math.floor(Math.random()*10); 
+	} 
+	return t; 
+} 

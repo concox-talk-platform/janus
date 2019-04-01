@@ -151,6 +151,8 @@ AC_ARG_ENABLE([all-plugins],
               [
                AS_IF([test "x$enable_plugin_audiobridge" != "xyes"],
                      [enable_plugin_audiobridge=no])
+               AS_IF([test "x$enable_plugin_pocroom" != "xyes"],
+                     [enable_plugin_pocroom=no])
                AS_IF([test "x$enable_plugin_duktape" != "xyes"],
                      [enable_plugin_duktape=no])
                AS_IF([test "x$enable_plugin_echotest" != "xyes"],
@@ -626,6 +628,13 @@ AC_ARG_ENABLE([plugin-audiobridge],
                      [enable_plugin_audiobridge=no])],
               [enable_plugin_audiobridge=maybe])
 
+AC_ARG_ENABLE([plugin-pocroom],
+              [AS_HELP_STRING([--disable-plugin-pocroom],
+                              [Disable pocroom plugin])],
+              [AS_IF([test "x$enable_plugin_pocroom" != "xyes"],
+                     [enable_plugin_pocroom=no])],
+              [enable_plugin_pocroom=maybe])
+
 AC_ARG_ENABLE([plugin-duktape],
               [AS_HELP_STRING([--enable-plugin-duktape],
                               [Enable duktape plugin])],
@@ -771,6 +780,19 @@ PKG_CHECK_MODULES([OPUS],
 AC_SUBST([OPUS_CFLAGS])
 AC_SUBST([OPUS_LIBS])
 
+PKG_CHECK_MODULES([OPUS],
+                  [opus],
+                  [
+                    AS_IF([test "x$enable_plugin_pocroom" = "xmaybe"],
+                          [enable_plugin_pocroom=yes])
+                  ],
+                  [
+                    AS_IF([test "x$enable_plugin_pocroom" = "xyes"],
+                          [AC_MSG_ERROR([libopus not found. See README.md for installation instructions or use --disable-plugin-pocroom])])
+                  ])
+AC_SUBST([OPUS_CFLAGS])
+AC_SUBST([OPUS_LIBS])
+
 PKG_CHECK_MODULES([OGG],
                   [ogg],
                   [
@@ -805,6 +827,7 @@ AC_SUBST([LUA_CFLAGS])
 AC_SUBST([LUA_LIBS])
 
 AM_CONDITIONAL([ENABLE_PLUGIN_AUDIOBRIDGE], [test "x$enable_plugin_audiobridge" = "xyes"])
+AM_CONDITIONAL([ENABLE_PLUGIN_POCROOM], [test "x$enable_plugin_pocroom" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_DUKTAPE], [test "x$enable_plugin_duktape" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_ECHOTEST], [test "x$enable_plugin_echotest" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_LUA], [test "x$enable_plugin_lua" = "xyes"])
@@ -992,6 +1015,9 @@ AM_COND_IF([ENABLE_PLUGIN_NOSIP],
 AM_COND_IF([ENABLE_PLUGIN_AUDIOBRIDGE],
 	[echo "    Audio Bridge:          yes"],
 	[echo "    Audio Bridge:          no"])
+AM_COND_IF([ENABLE_PLUGIN_POCROOM],
+	[echo "    POC Room:              yes"],
+	[echo "    POC Room:              no"])
 AM_COND_IF([ENABLE_PLUGIN_VIDEOROOM],
 	[echo "    Video Room:            yes"],
 	[echo "    Video Room:            no"])
