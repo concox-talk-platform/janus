@@ -23,6 +23,7 @@ CFLAGS="$CFLAGS \
 	-fstack-protector-all \
 	-fstrict-aliasing \
 	-ggdb3 \
+	-lhiredis \
 	-pthread \
 	-Wall \
 	-Warray-bounds \

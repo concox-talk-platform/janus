@@ -628,6 +628,7 @@ room-<unique room ID>: {
 #include "../apierror.h"
 #include "../config.h"
 #include "../mutex.h"
+#include "../redis_utils.h"
 #include "../rtp.h"
 #include "../rtpsrtp.h"
 #include "../rtcp.h"
@@ -1165,21 +1166,21 @@ typedef struct wav_header {
 
 
 /* Error codes */
-#define JANUS_pocroom_ERROR_UNKNOWN_ERROR	499
-#define JANUS_pocroom_ERROR_NO_MESSAGE		480
-#define JANUS_pocroom_ERROR_INVALID_JSON	481
-#define JANUS_pocroom_ERROR_INVALID_REQUEST	482
-#define JANUS_pocroom_ERROR_MISSING_ELEMENT	483
-#define JANUS_pocroom_ERROR_INVALID_ELEMENT	484
-#define JANUS_pocroom_ERROR_NO_SUCH_ROOM	485
-#define JANUS_pocroom_ERROR_ROOM_EXISTS		486
-#define JANUS_pocroom_ERROR_NOT_JOINED		487
-#define JANUS_pocroom_ERROR_LIBOPUS_ERROR	488
-#define JANUS_pocroom_ERROR_UNAUTHORIZED	489
-#define JANUS_pocroom_ERROR_ID_EXISTS		490
-#define JANUS_pocroom_ERROR_ALREADY_JOINED	491
-#define JANUS_pocroom_ERROR_NO_SUCH_USER	492
-#define JANUS_pocroom_ERROR_INVALID_SDP		493
+#define JANUS_POCROOM_ERROR_UNKNOWN_ERROR	499
+#define JANUS_POCROOM_ERROR_NO_MESSAGE		480
+#define JANUS_POCROOM_ERROR_INVALID_JSON	481
+#define JANUS_POCROOM_ERROR_INVALID_REQUEST	482
+#define JANUS_POCROOM_ERROR_MISSING_ELEMENT	483
+#define JANUS_POCROOM_ERROR_INVALID_ELEMENT	484
+#define JANUS_POCROOM_ERROR_NO_SUCH_ROOM	485
+#define JANUS_POCROOM_ERROR_ROOM_EXISTS		486
+#define JANUS_POCROOM_ERROR_NOT_JOINED		487
+#define JANUS_POCROOM_ERROR_LIBOPUS_ERROR	488
+#define JANUS_POCROOM_ERROR_UNAUTHORIZED	489
+#define JANUS_POCROOM_ERROR_ID_EXISTS		490
+#define JANUS_POCROOM_ERROR_ALREADY_JOINED	491
+#define JANUS_POCROOM_ERROR_NO_SUCH_USER	492
+#define JANUS_POCROOM_ERROR_INVALID_SDP		493
 
 static int janus_pocroom_create_udp_socket_if_needed(janus_pocroom_room *pocroom) {
 	if(pocroom->rtp_udp_sock > 0) {
@@ -1319,12 +1320,12 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 
 	/* Read configuration */
 	char filename[255];
-	g_snprintf(filename, 255, "%s/%s.jcfg", config_path, JANUS_pocroom_PACKAGE);
+	g_snprintf(filename, 255, "%s/%s.jcfg", config_path, JANUS_POCROOM_PACKAGE);
 	JANUS_LOG(LOG_VERB, "Configuration file: %s\n", filename);
 	config = janus_config_parse(filename);
 	if(config == NULL) {
-		JANUS_LOG(LOG_WARN, "Couldn't find .jcfg configuration file (%s), trying .cfg\n", JANUS_pocroom_PACKAGE);
-		g_snprintf(filename, 255, "%s/%s.cfg", config_path, JANUS_pocroom_PACKAGE);
+		JANUS_LOG(LOG_WARN, "Couldn't find .jcfg configuration file (%s), trying .cfg\n", JANUS_POCROOM_PACKAGE);
+		g_snprintf(filename, 255, "%s/%s.cfg", config_path, JANUS_POCROOM_PACKAGE);
 		JANUS_LOG(LOG_VERB, "Configuration file: %s\n", filename);
 		config = janus_config_parse(filename);
 	}
@@ -1486,6 +1487,100 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 		/* Done: we keep the configuration file open in case we get a "create" or "destroy" with permanent=true */
 	}
 
+	/* Read redis config */
+	g_snprintf(filename, 255, "%s/%s.jcfg", config_path, "janus.redis");
+	JANUS_LOG(LOG_VERB, "Configuration file: %s\n", filename);
+	janus_config *redisconfig = janus_config_parse(filename);
+	if(redisconfig == NULL) {
+		JANUS_LOG(LOG_WARN, "Couldn't find .jcfg configuration file (%s), trying .cfg\n", "janus.redis");
+		g_snprintf(filename, 255, "%s/%s.cfg", config_path, "janus.redis");
+		JANUS_LOG(LOG_VERB, "Configuration file: %s\n", filename);
+		redisconfig = janus_config_parse(filename);
+	}
+
+	if(redisconfig != NULL)
+		janus_config_print(redisconfig);
+
+	/* Parse configuration to populate the rooms list */
+
+	if(redisconfig != NULL) {
+		redisContext* c = janus_redis_connect_config(filename);
+		/* Iterate on all redisReplys*/
+		redisReply* reply = (redisReply *)redisCommand(c, "keys grp:*:mem");//TODO
+		if (reply->type == REDIS_REPLY_ERROR || reply == NULL) {
+			JANUS_LOG(LOG_WARN, "Can not get groups' info from redis, it's ok?\n");
+		}
+
+		if (reply != NULL) {
+			guint64 pos = 0;
+			if (reply->element != NULL) {
+				redisReply** replyArr = reply->element;
+				while (pos != reply->elements) {
+					/* Create the poc room */
+					/* "grp:1234:mem" */
+					redisReply *group = *(replyArr + pos);
+					char idStr[20] = {'\0'};
+					guint64 pos_f = strlen("grp:");
+					guint64 pos_s = strlen(group->str) - strlen(":mem");
+					guint64 len = pos_s - pos_f;
+					strncpy(idStr, group->str + pos_f, len);
+					guint64 room_id = atoi(idStr);
+		
+					if (room_id < 0 || room_id == 0) {
+						printf("fatal room_id %d\n", room_id);
+						++pos;
+						continue;
+					}
+					JANUS_LOG(LOG_INFO, "room id %d\n", room_id);
+					
+					janus_pocroom_room *pocroom = g_malloc0(sizeof(janus_pocroom_room));
+					pocroom->room_id = room_id;
+					pocroom->sampling_rate = 16000; /* mandatory, 16000 default	*/			
+					pocroom->participants = g_hash_table_new_full(g_int64_hash, g_int64_equal,
+						(GDestroyNotify)g_free, (GDestroyNotify)janus_pocroom_participant_unref);
+					pocroom->check_tokens = FALSE;	/* Static rooms can't have an "allowed" list yet, no hooks to the configuration file */
+					pocroom->allowed = g_hash_table_new_full(g_str_hash, g_str_equal, (GDestroyNotify)g_free, NULL);
+					g_atomic_int_set(&pocroom->destroyed, 0);
+					janus_mutex_init(&pocroom->mutex);
+					pocroom->rtp_forwarders = g_hash_table_new_full(NULL, NULL, NULL, (GDestroyNotify)g_free);
+					pocroom->rtp_encoder = NULL;
+					pocroom->rtp_udp_sock = -1;
+					janus_mutex_init(&pocroom->rtp_mutex);
+					janus_refcount_init(&pocroom->ref, janus_pocroom_room_free);
+					JANUS_LOG(LOG_VERB, "Created pocroom: %"SCNu64" (%s, %s, secret: %s, pin: %s)\n",
+						pocroom->room_id, pocroom->room_name,
+						pocroom->is_private ? "private" : "public",
+						pocroom->room_secret ? pocroom->room_secret : "no secret",
+						pocroom->room_pin ? pocroom->room_pin : "no pin");
+
+					// if(janus_pocroom_create_static_rtp_forwarder(cat, pocroom)) {
+					// 	JANUS_LOG(LOG_ERR, "Error creating static RTP forwarder (room %"SCNu64")\n", pocroom->room_id);
+					// }
+
+					/* We need a thread for the mix */
+					GError *error = NULL;
+					char tname[16];
+					g_snprintf(tname, sizeof(tname), "mixer %"SCNu64, pocroom->room_id);
+					janus_refcount_increase(&pocroom->ref);
+					pocroom->thread = g_thread_try_new(tname, &janus_pocroom_mixer_thread, pocroom, &error);
+					if(error != NULL) {
+						/* FIXME We should clear some resources... */
+						janus_refcount_decrease(&pocroom->ref);
+						JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the mixer thread...\n", error->code, error->message ? error->message : "??");
+					} else {
+						janus_mutex_lock(&rooms_mutex);
+						g_hash_table_insert(rooms, janus_uint64_dup(pocroom->room_id), pocroom);
+						janus_mutex_unlock(&rooms_mutex);
+					}
+					++pos;
+				}
+			}
+		}
+		freeReplyObject(reply);
+		redisFree(c);
+		/* Done: we keep the configuration file open in case we get a "create" or "destroy" with permanent=true */
+	}/* End redis reading */
+
 	/* Show available rooms */
 	janus_mutex_lock(&rooms_mutex);
 	GHashTableIter iter;
@@ -1509,7 +1604,7 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 		janus_config_destroy(config);
 		return -1;
 	}
-	JANUS_LOG(LOG_INFO, "%s initialized!\n", JANUS_pocroom_NAME);
+	JANUS_LOG(LOG_INFO, "%s initialized!\n", JANUS_POCROOM_NAME);
 	return 0;
 }
 
@@ -1705,7 +1800,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 	if(!session) {
 		janus_mutex_unlock(&sessions_mutex);
 		JANUS_LOG(LOG_ERR, "No session associated with this handle...\n");
-		error_code = JANUS_pocroom_ERROR_UNKNOWN_ERROR;
+		error_code = JANUS_POCROOM_ERROR_UNKNOWN_ERROR;
 		g_snprintf(error_cause, 512, "%s", "No session associated with this handle...");
 		goto plugin_response;
 	}
@@ -1714,27 +1809,27 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 	janus_mutex_unlock(&sessions_mutex);
 	if(g_atomic_int_get(&session->destroyed)) {
 		JANUS_LOG(LOG_ERR, "Session has already been marked as destroyed...\n");
-		error_code = JANUS_pocroom_ERROR_UNKNOWN_ERROR;
+		error_code = JANUS_POCROOM_ERROR_UNKNOWN_ERROR;
 		g_snprintf(error_cause, 512, "%s", "Session has already been marked as destroyed...");
 		goto plugin_response;
 	}
 
 	if(message == NULL) {
 		JANUS_LOG(LOG_ERR, "No message??\n");
-		error_code = JANUS_pocroom_ERROR_NO_MESSAGE;
+		error_code = JANUS_POCROOM_ERROR_NO_MESSAGE;
 		g_snprintf(error_cause, 512, "%s", "No message??");
 		goto plugin_response;
 	}
 	if(!json_is_object(root)) {
 		JANUS_LOG(LOG_ERR, "JSON error: not an object\n");
-		error_code = JANUS_pocroom_ERROR_INVALID_JSON;
+		error_code = JANUS_POCROOM_ERROR_INVALID_JSON;
 		g_snprintf(error_cause, 512, "JSON error: not an object");
 		goto plugin_response;
 	}
 	/* Get the request first */
 	JANUS_VALIDATE_JSON_OBJECT(root, request_parameters,
 		error_code, error_cause, TRUE,
-		JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+		JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 	if(error_code != 0)
 		goto plugin_response;
 	json_t *request = json_object_get(root, "request");
@@ -1746,18 +1841,18 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		JANUS_LOG(LOG_VERB, "Creating a new pocroom\n");
 		JANUS_VALIDATE_JSON_OBJECT(root, create_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		if(admin_key != NULL) {
 			/* An admin key was specified: make sure it was provided, and that it's valid */
 			JANUS_VALIDATE_JSON_OBJECT(root, adminkey_parameters,
 				error_code, error_cause, TRUE,
-				JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+				JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 			if(error_code != 0)
 				goto plugin_response;
 			JANUS_CHECK_SECRET(admin_key, root, "admin_key", error_code, error_cause,
-				JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+				JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 			if(error_code != 0)
 				goto plugin_response;
 		}
@@ -1789,7 +1884,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 			}
 			if(!ok) {
 				JANUS_LOG(LOG_ERR, "Invalid element in the allowed array (not a string)\n");
-				error_code = JANUS_pocroom_ERROR_INVALID_ELEMENT;
+				error_code = JANUS_POCROOM_ERROR_INVALID_ELEMENT;
 				g_snprintf(error_cause, 512, "Invalid element in the allowed array (not a string)");
 				goto plugin_response;
 			}
@@ -1797,7 +1892,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		gboolean save = permanent ? json_is_true(permanent) : FALSE;
 		if(save && config == NULL) {
 			JANUS_LOG(LOG_ERR, "No configuration file, can't create permanent room\n");
-			error_code = JANUS_pocroom_ERROR_UNKNOWN_ERROR;
+			error_code = JANUS_POCROOM_ERROR_UNKNOWN_ERROR;
 			g_snprintf(error_cause, 512, "No configuration file, can't create permanent room");
 			goto plugin_response;
 		}
@@ -1814,7 +1909,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 				/* It does... */
 				janus_mutex_unlock(&rooms_mutex);
 				JANUS_LOG(LOG_ERR, "Room %"SCNu64" already exists!\n", room_id);
-				error_code = JANUS_pocroom_ERROR_ROOM_EXISTS;
+				error_code = JANUS_POCROOM_ERROR_ROOM_EXISTS;
 				g_snprintf(error_cause, 512, "Room %"SCNu64" already exists", room_id);
 				goto plugin_response;
 			}
@@ -1879,7 +1974,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 			default:
 				janus_mutex_unlock(&rooms_mutex);
 				JANUS_LOG(LOG_ERR, "Unsupported sampling rate %"SCNu32"...\n", pocroom->sampling_rate);
-				error_code = JANUS_pocroom_ERROR_UNKNOWN_ERROR;
+				error_code = JANUS_POCROOM_ERROR_UNKNOWN_ERROR;
 				g_snprintf(error_cause, 512, "We currently only support 16kHz (wideband) as a sampling rate for audio rooms, %"SCNu32" TBD...", pocroom->sampling_rate);
 				goto plugin_response;
 		}
@@ -1926,7 +2021,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		pocroom->thread = g_thread_try_new(tname, &janus_pocroom_mixer_thread, pocroom, &error);
 		if(error != NULL) {
 			JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the mixer thread...\n", error->code, error->message ? error->message : "??");
-			error_code = JANUS_pocroom_ERROR_UNKNOWN_ERROR;
+			error_code = JANUS_POCROOM_ERROR_UNKNOWN_ERROR;
 			g_snprintf(error_cause, 512, "Got error %d (%s) trying to launch the mixer thread", error->code, error->message ? error->message : "??");
 			janus_refcount_decrease(&pocroom->ref);
 			g_hash_table_remove(rooms, &pocroom->room_id);
@@ -1970,7 +2065,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 				janus_config_add(config, c, janus_config_item_create("record_file", pocroom->record_file));
 			}
 			/* Save modified configuration */
-			if(janus_config_save(config, config_folder, JANUS_pocroom_PACKAGE) < 0)
+			if(janus_config_save(config, config_folder, JANUS_POCROOM_PACKAGE) < 0)
 				save = FALSE;	/* This will notify the user the room is not permanent */
 			janus_mutex_unlock(&config_mutex);
 		}
@@ -1992,7 +2087,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		JANUS_LOG(LOG_VERB, "Attempt to edit an existing pocroom room\n");
 		JANUS_VALIDATE_JSON_OBJECT(root, edit_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		/* We only allow for a limited set of properties to be edited */
@@ -2005,7 +2100,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		gboolean save = permanent ? json_is_true(permanent) : FALSE;
 		if(save && config == NULL) {
 			JANUS_LOG(LOG_ERR, "No configuration file, can't edit room permanently\n");
-			error_code = JANUS_pocroom_ERROR_UNKNOWN_ERROR;
+			error_code = JANUS_POCROOM_ERROR_UNKNOWN_ERROR;
 			g_snprintf(error_cause, 512, "No configuration file, can't edit room permanently");
 			goto plugin_response;
 		}
@@ -2015,14 +2110,14 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		if(pocroom == NULL) {
 			janus_mutex_unlock(&rooms_mutex);
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			goto plugin_response;
 		}
 		janus_mutex_lock(&pocroom->mutex);
 		/* A secret may be required for this action */
 		JANUS_CHECK_SECRET(pocroom->room_secret, root, "secret", error_code, error_cause,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 		if(error_code != 0) {
 			janus_mutex_unlock(&pocroom->mutex);
 			janus_mutex_unlock(&rooms_mutex);
@@ -2088,7 +2183,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 				janus_config_add(config, c, janus_config_item_create("record_file", pocroom->record_file));
 			}
 			/* Save modified configuration */
-			if(janus_config_save(config, config_folder, JANUS_pocroom_PACKAGE) < 0)
+			if(janus_config_save(config, config_folder, JANUS_POCROOM_PACKAGE) < 0)
 				save = FALSE;	/* This will notify the user the room changes are not permanent */
 			janus_mutex_unlock(&config_mutex);
 		}
@@ -2113,7 +2208,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		JANUS_LOG(LOG_VERB, "Attempt to destroy an existing pocroom room\n");
 		JANUS_VALIDATE_JSON_OBJECT(root, destroy_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		json_t *room = json_object_get(root, "room");
@@ -2121,7 +2216,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		gboolean save = permanent ? json_is_true(permanent) : FALSE;
 		if(save && config == NULL) {
 			JANUS_LOG(LOG_ERR, "No configuration file, can't destroy room permanently\n");
-			error_code = JANUS_pocroom_ERROR_UNKNOWN_ERROR;
+			error_code = JANUS_POCROOM_ERROR_UNKNOWN_ERROR;
 			g_snprintf(error_cause, 512, "No configuration file, can't destroy room permanently");
 			goto plugin_response;
 		}
@@ -2131,14 +2226,14 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		if(pocroom == NULL) {
 			janus_mutex_unlock(&rooms_mutex);
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			goto plugin_response;
 		}
 		janus_mutex_lock(&pocroom->mutex);
 		/* A secret may be required for this action */
 		JANUS_CHECK_SECRET(pocroom->room_secret, root, "secret", error_code, error_cause,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 		if(error_code != 0) {
 			janus_mutex_unlock(&pocroom->mutex);
 			janus_mutex_unlock(&rooms_mutex);
@@ -2157,7 +2252,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 			g_snprintf(cat, BUFSIZ, "room-%"SCNu64, room_id);
 			janus_config_remove(config, NULL, cat);
 			/* Save modified configuration */
-			if(janus_config_save(config, config_folder, JANUS_pocroom_PACKAGE) < 0)
+			if(janus_config_save(config, config_folder, JANUS_POCROOM_PACKAGE) < 0)
 				save = FALSE;	/* This will notify the user the room destruction is not permanent */
 			janus_mutex_unlock(&config_mutex);
 		}
@@ -2256,7 +2351,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		/* Check whether a given room exists or not, returns true/false */
 		JANUS_VALIDATE_JSON_OBJECT(root, room_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		json_t *room = json_object_get(root, "room");
@@ -2273,7 +2368,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		JANUS_LOG(LOG_VERB, "Attempt to edit the list of allowed participants in an existing pocroom room\n");
 		JANUS_VALIDATE_JSON_OBJECT(root, allowed_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		json_t *action = json_object_get(root, "action");
@@ -2283,7 +2378,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		if(strcasecmp(action_text, "enable") && strcasecmp(action_text, "disable") &&
 				strcasecmp(action_text, "add") && strcasecmp(action_text, "remove")) {
 			JANUS_LOG(LOG_ERR, "Unsupported action '%s' (allowed)\n", action_text);
-			error_code = JANUS_pocroom_ERROR_INVALID_ELEMENT;
+			error_code = JANUS_POCROOM_ERROR_INVALID_ELEMENT;
 			g_snprintf(error_cause, 512, "Unsupported action '%s' (allowed)", action_text);
 			goto plugin_response;
 		}
@@ -2293,14 +2388,14 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		if(pocroom == NULL) {
 			janus_mutex_unlock(&rooms_mutex);
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			goto plugin_response;
 		}
 		janus_mutex_lock(&pocroom->mutex);
 		/* A secret may be required for this action */
 		JANUS_CHECK_SECRET(pocroom->room_secret, root, "secret", error_code, error_cause,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 		if(error_code != 0) {
 			janus_mutex_unlock(&pocroom->mutex);
 			janus_mutex_unlock(&rooms_mutex);
@@ -2329,7 +2424,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 				}
 				if(!ok) {
 					JANUS_LOG(LOG_ERR, "Invalid element in the allowed array (not a string)\n");
-					error_code = JANUS_pocroom_ERROR_INVALID_ELEMENT;
+					error_code = JANUS_POCROOM_ERROR_INVALID_ELEMENT;
 					g_snprintf(error_cause, 512, "Invalid element in the allowed array (not a string)");
 					janus_mutex_unlock(&pocroom->mutex);
 					janus_mutex_unlock(&rooms_mutex);
@@ -2373,7 +2468,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		JANUS_LOG(LOG_VERB, "Attempt to kick a participant from an existing pocroom room\n");
 		JANUS_VALIDATE_JSON_OBJECT(root, kick_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		json_t *room = json_object_get(root, "room");
@@ -2384,7 +2479,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		if(pocroom == NULL) {
 			janus_mutex_unlock(&rooms_mutex);
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			goto plugin_response;
 		}
@@ -2393,7 +2488,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		janus_mutex_unlock(&rooms_mutex);
 		/* A secret may be required for this action */
 		JANUS_CHECK_SECRET(pocroom->room_secret, root, "secret", error_code, error_cause,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 		if(error_code != 0) {
 			janus_mutex_unlock(&pocroom->mutex);
 			janus_refcount_decrease(&pocroom->ref);
@@ -2405,7 +2500,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 			janus_mutex_unlock(&pocroom->mutex);
 			janus_refcount_decrease(&pocroom->ref);
 			JANUS_LOG(LOG_ERR, "No such user %"SCNu64" in room %"SCNu64"\n", user_id, room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_USER;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_USER;
 			g_snprintf(error_cause, 512, "No such user %"SCNu64" in room %"SCNu64, user_id, room_id);
 			goto plugin_response;
 		}
@@ -2447,7 +2542,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		/* List all participants in a room */
 		JANUS_VALIDATE_JSON_OBJECT(root, room_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		json_t *room = json_object_get(root, "room");
@@ -2457,7 +2552,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		if(pocroom == NULL || g_atomic_int_get(&pocroom->destroyed)) {
 			janus_mutex_unlock(&rooms_mutex);
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			goto plugin_response;
 		}
@@ -2492,7 +2587,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		janus_pocroom_participant *participant = (janus_pocroom_participant *)session->participant;
 		if(participant == NULL || participant->room == NULL) {
 			JANUS_LOG(LOG_ERR, "Can't reset (not in a room)\n");
-			error_code = JANUS_pocroom_ERROR_NOT_JOINED;
+			error_code = JANUS_POCROOM_ERROR_NOT_JOINED;
 			g_snprintf(error_cause, 512, "Can't reset (not in a room)");
 			goto plugin_response;
 		}
@@ -2503,7 +2598,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 	} else if(!strcasecmp(request_text, "rtp_forward")) {
 		JANUS_VALIDATE_JSON_OBJECT(root, rtp_forward_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		/* Parse arguments */
@@ -2519,7 +2614,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		uint16_t port = json_integer_value(json_object_get(root, "port"));
 		if(port == 0) {
 			JANUS_LOG(LOG_ERR, "Invalid port number (%d)\n", port);
-			error_code = JANUS_pocroom_ERROR_INVALID_ELEMENT;
+			error_code = JANUS_POCROOM_ERROR_INVALID_ELEMENT;
 			g_snprintf(error_cause, 512, "Invalid port number (%d)", port);
 			goto plugin_response;
 		}
@@ -2536,7 +2631,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 			srtp_suite = json_integer_value(s_suite);
 			if(srtp_suite != 32 && srtp_suite != 80) {
 				JANUS_LOG(LOG_ERR, "Invalid SRTP suite (%d)\n", srtp_suite);
-				error_code = JANUS_pocroom_ERROR_INVALID_ELEMENT;
+				error_code = JANUS_POCROOM_ERROR_INVALID_ELEMENT;
 				g_snprintf(error_cause, 512, "Invalid SRTP suite (%d)", srtp_suite);
 				goto plugin_response;
 			}
@@ -2548,13 +2643,13 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		if(pocroom == NULL) {
 			janus_mutex_unlock(&rooms_mutex);
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			goto plugin_response;
 		}
 		/* A secret may be required for this action */
 		JANUS_CHECK_SECRET(pocroom->room_secret, root, "secret", error_code, error_cause,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 		if(error_code != 0) {
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
@@ -2564,7 +2659,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 			janus_mutex_unlock(&pocroom->mutex);
 			janus_mutex_unlock(&rooms_mutex);
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			goto plugin_response;
 		}
@@ -2572,7 +2667,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		if (janus_pocroom_create_udp_socket_if_needed(pocroom)) {
 			janus_mutex_unlock(&pocroom->mutex);
 			janus_mutex_unlock(&rooms_mutex);
-			error_code = JANUS_pocroom_ERROR_UNKNOWN_ERROR;
+			error_code = JANUS_POCROOM_ERROR_UNKNOWN_ERROR;
 			g_snprintf(error_cause, 512, "Could not open UDP socket for RTP forwarder");
 			goto plugin_response;
 		}
@@ -2580,7 +2675,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		if (janus_pocroom_create_opus_encoder_if_needed(pocroom)) {
 			janus_mutex_unlock(&pocroom->mutex);
 			janus_mutex_unlock(&rooms_mutex);
-			error_code = JANUS_pocroom_ERROR_LIBOPUS_ERROR;
+			error_code = JANUS_POCROOM_ERROR_LIBOPUS_ERROR;
 			g_snprintf(error_cause, 512, "Error creating Opus decoder for RTP forwarder");
 			goto plugin_response;
 		}
@@ -2601,7 +2696,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 	} else if(!strcasecmp(request_text, "stop_rtp_forward")) {
 		JANUS_VALIDATE_JSON_OBJECT(root, stop_rtp_forward_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		/* Parse parameters */
@@ -2614,13 +2709,13 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		if(pocroom == NULL) {
 			janus_mutex_unlock(&rooms_mutex);
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			goto plugin_response;
 		}
 		/* A secret may be required for this action */
 		JANUS_CHECK_SECRET(pocroom->room_secret, root, "secret", error_code, error_cause,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 		if(error_code != 0) {
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
@@ -2630,7 +2725,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 			janus_mutex_unlock(&pocroom->mutex);
 			janus_mutex_unlock(&rooms_mutex);
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			goto plugin_response;
 		}
@@ -2648,7 +2743,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		/* List all forwarders in a room */
 		JANUS_VALIDATE_JSON_OBJECT(root, room_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		json_t *room = json_object_get(root, "room");
@@ -2657,21 +2752,21 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		janus_pocroom_room *pocroom = g_hash_table_lookup(rooms, &room_id);
 		if(pocroom == NULL) {
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
 		if(pocroom->destroyed) {
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
 		/* A secret may be required for this action */
 		JANUS_CHECK_SECRET(pocroom->room_secret, root, "secret", error_code, error_cause,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 		if(error_code != 0) {
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
@@ -2706,7 +2801,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 	} else if(!strcasecmp(request_text, "talk")) {
 		JANUS_VALIDATE_JSON_OBJECT(root, talk_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		json_t *room = json_object_get(root, "room");
@@ -2715,14 +2810,14 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		janus_pocroom_room *pocroom = g_hash_table_lookup(rooms, &room_id);
 		if(pocroom == NULL) {
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
 		if(pocroom->destroyed) {
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
@@ -2730,7 +2825,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 
 		/* A secret may be required for this action */
 		JANUS_CHECK_SECRET(pocroom->room_secret, root, "secret", error_code, error_cause,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 		if(error_code != 0) {
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
@@ -2824,13 +2919,14 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
         janus_mutex_unlock(&rooms_mutex);
 
 		response = json_object();
+		json_object_set_new(response, "pocroom", json_string("success"));
 		json_object_set_new(response, "talk", json_integer(pocroom->talker));
 		json_object_set_new(response, "room", json_integer(room_id));
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "untalk")) {
 		JANUS_VALIDATE_JSON_OBJECT(root, untalk_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto plugin_response;
 		json_t *room = json_object_get(root, "room");
@@ -2839,14 +2935,14 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		janus_pocroom_room *pocroom = g_hash_table_lookup(rooms, &room_id);
 		if(pocroom == NULL) {
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
 		if(pocroom->destroyed) {
 			JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-			error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+			error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 			g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
@@ -2854,7 +2950,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 
 		/* A secret may be required for this action */
 		JANUS_CHECK_SECRET(pocroom->room_secret, root, "secret", error_code, error_cause,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 		if(error_code != 0) {
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
@@ -2866,7 +2962,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		/* Useless request */
 		if(pocroom->talker == 0 || pocroom->talker != user_id) {
 			JANUS_LOG(LOG_ERR, "(%"SCNu64") no right to untalk\n", user_id);
-			error_code = JANUS_pocroom_ERROR_INVALID_REQUEST;
+			error_code = JANUS_POCROOM_ERROR_INVALID_REQUEST;
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
@@ -2904,6 +3000,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
         janus_mutex_unlock(&rooms_mutex);
 
 		response = json_object();
+		json_object_set_new(response, "pocroom", json_string("success"));
 		json_object_set_new(response, "untalk", json_integer(pocroom->talker));
 		json_object_set_new(response, "room", json_integer(room_id));
 		goto plugin_response;
@@ -2921,14 +3018,14 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		return janus_plugin_result_new(JANUS_PLUGIN_OK_WAIT, NULL, NULL);
 	} else {
 		JANUS_LOG(LOG_VERB, "Unknown request '%s'\n", request_text);
-		error_code = JANUS_pocroom_ERROR_INVALID_REQUEST;
+		error_code = JANUS_POCROOM_ERROR_INVALID_REQUEST;
 		g_snprintf(error_cause, 512, "Unknown request '%s'", request_text);
 	}
 
 plugin_response:
 		{
 			if(error_code == 0 && !response) {
-				error_code = JANUS_pocroom_ERROR_UNKNOWN_ERROR;
+				error_code = JANUS_POCROOM_ERROR_UNKNOWN_ERROR;
 				g_snprintf(error_cause, 512, "Invalid response");
 			}
 			if(error_code != 0) {
@@ -2953,7 +3050,7 @@ plugin_response:
 }
 
 void janus_pocroom_setup_media(janus_plugin_session *handle) {
-	JANUS_LOG(LOG_INFO, "[%s-%p] WebRTC media is now available\n", JANUS_pocroom_PACKAGE, handle);
+	JANUS_LOG(LOG_INFO, "[%s-%p] WebRTC media is now available\n", JANUS_POCROOM_PACKAGE, handle);
 	if(g_atomic_int_get(&stopping) || !g_atomic_int_get(&initialized))
 		return;
 	janus_mutex_lock(&sessions_mutex);
@@ -3268,7 +3365,7 @@ static void janus_pocroom_recorder_close(janus_pocroom_participant *participant)
 }
 
 void janus_pocroom_hangup_media(janus_plugin_session *handle) {
-	JANUS_LOG(LOG_INFO, "[%s-%p] No WebRTC media anymore\n", JANUS_pocroom_PACKAGE, handle);
+	JANUS_LOG(LOG_INFO, "[%s-%p] No WebRTC media anymore\n", JANUS_POCROOM_PACKAGE, handle);
 	janus_mutex_lock(&sessions_mutex);
 	janus_pocroom_hangup_media_internal(handle);
 	janus_mutex_unlock(&sessions_mutex);
@@ -3411,7 +3508,7 @@ static void *janus_pocroom_handler(void *data) {
 		root = NULL;
 		if(msg->message == NULL) {
 			JANUS_LOG(LOG_ERR, "No message??\n");
-			error_code = JANUS_pocroom_ERROR_NO_MESSAGE;
+			error_code = JANUS_POCROOM_ERROR_NO_MESSAGE;
 			g_snprintf(error_cause, 512, "%s", "No message??");
 			goto error;
 		}
@@ -3419,7 +3516,7 @@ static void *janus_pocroom_handler(void *data) {
 		/* Get the request first */
 		JANUS_VALIDATE_JSON_OBJECT(root, request_parameters,
 			error_code, error_cause, TRUE,
-			JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+			JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 		if(error_code != 0)
 			goto error;
 		json_t *request = json_object_get(root, "request");
@@ -3433,13 +3530,13 @@ static void *janus_pocroom_handler(void *data) {
 			janus_pocroom_participant *participant = session->participant;
 			if(participant != NULL && participant->room != NULL) {
 				JANUS_LOG(LOG_ERR, "Already in a room (use changeroom to join another one)\n");
-				error_code = JANUS_pocroom_ERROR_ALREADY_JOINED;
+				error_code = JANUS_POCROOM_ERROR_ALREADY_JOINED;
 				g_snprintf(error_cause, 512, "Already in a room (use changeroom to join another one)");
 				goto error;
 			}
 			JANUS_VALIDATE_JSON_OBJECT(root, join_parameters,
 				error_code, error_cause, TRUE,
-				JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+				JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 			if(error_code != 0)
 				goto error;
 			json_t *room = json_object_get(root, "room");
@@ -3449,7 +3546,7 @@ static void *janus_pocroom_handler(void *data) {
 			if(pocroom == NULL || g_atomic_int_get(&pocroom->destroyed)) {
 				janus_mutex_unlock(&rooms_mutex);
 				JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-				error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+				error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 				g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 				goto error;
 			}
@@ -3458,7 +3555,7 @@ static void *janus_pocroom_handler(void *data) {
 			janus_mutex_unlock(&rooms_mutex);
 			/* A pin may be required for this action */
 			JANUS_CHECK_SECRET(pocroom->room_pin, root, "pin", error_code, error_cause,
-				JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+				JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 			if(error_code != 0) {
 				janus_mutex_unlock(&pocroom->mutex);
 				janus_refcount_decrease(&pocroom->ref);
@@ -3470,7 +3567,7 @@ static void *janus_pocroom_handler(void *data) {
 				const char *token_text = token ? json_string_value(token) : NULL;
 				if(token_text == NULL || g_hash_table_lookup(pocroom->allowed, token_text) == NULL) {
 					JANUS_LOG(LOG_ERR, "Unauthorized (not in the allowed list)\n");
-					error_code = JANUS_pocroom_ERROR_UNAUTHORIZED;
+					error_code = JANUS_POCROOM_ERROR_UNAUTHORIZED;
 					g_snprintf(error_cause, 512, "Unauthorized (not in the allowed list)");
 					janus_mutex_unlock(&pocroom->mutex);
 					janus_refcount_decrease(&pocroom->ref);
@@ -3488,7 +3585,7 @@ static void *janus_pocroom_handler(void *data) {
 				janus_mutex_unlock(&pocroom->mutex);
 				janus_refcount_decrease(&pocroom->ref);
 				JANUS_LOG(LOG_ERR, "Invalid element (quality should be a positive integer between 1 and 10)\n");
-				error_code = JANUS_pocroom_ERROR_INVALID_ELEMENT;
+				error_code = JANUS_POCROOM_ERROR_INVALID_ELEMENT;
 				g_snprintf(error_cause, 512, "Invalid element (quality should be a positive integer between 1 and 10)");
 				goto error;
 			}
@@ -3501,7 +3598,7 @@ static void *janus_pocroom_handler(void *data) {
 					janus_mutex_unlock(&pocroom->mutex);
 					janus_refcount_decrease(&pocroom->ref);
 					JANUS_LOG(LOG_ERR, "User ID %"SCNu64" already exists\n", user_id);
-					error_code = JANUS_pocroom_ERROR_ID_EXISTS;
+					error_code = JANUS_POCROOM_ERROR_ID_EXISTS;
 					g_snprintf(error_cause, 512, "User ID %"SCNu64" already exists", user_id);
 					goto error;
 				}
@@ -3567,7 +3664,7 @@ static void *janus_pocroom_handler(void *data) {
 					g_free(participant->display);
 					g_free(participant);
 					JANUS_LOG(LOG_ERR, "Error creating Opus encoder\n");
-					error_code = JANUS_pocroom_ERROR_LIBOPUS_ERROR;
+					error_code = JANUS_POCROOM_ERROR_LIBOPUS_ERROR;
 					g_snprintf(error_cause, 512, "Error creating Opus decoder");
 					goto error;
 				}
@@ -3605,7 +3702,7 @@ static void *janus_pocroom_handler(void *data) {
 					participant->decoder = NULL;
 					g_free(participant);
 					JANUS_LOG(LOG_ERR, "Error creating Opus encoder\n");
-					error_code = JANUS_pocroom_ERROR_LIBOPUS_ERROR;
+					error_code = JANUS_POCROOM_ERROR_LIBOPUS_ERROR;
 					g_snprintf(error_cause, 512, "Error creating Opus decoder");
 					goto error;
 				}
@@ -3701,14 +3798,14 @@ static void *janus_pocroom_handler(void *data) {
 			janus_pocroom_participant *participant = (janus_pocroom_participant *)session->participant;
 			if(participant == NULL || participant->room == NULL) {
 				JANUS_LOG(LOG_ERR, "Can't configure (not in a room)\n");
-				error_code = JANUS_pocroom_ERROR_NOT_JOINED;
+				error_code = JANUS_POCROOM_ERROR_NOT_JOINED;
 				g_snprintf(error_cause, 512, "Can't configure (not in a room)");
 				goto error;
 			}
 			/* Configure settings for this participant */
 			JANUS_VALIDATE_JSON_OBJECT(root, configure_parameters,
 				error_code, error_cause, TRUE,
-				JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+				JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 			if(error_code != 0)
 				goto error;
 			json_t *muted = json_object_get(root, "muted");
@@ -3724,7 +3821,7 @@ static void *janus_pocroom_handler(void *data) {
 				int complexity = json_integer_value(quality);
 				if(complexity < 1 || complexity > 10) {
 					JANUS_LOG(LOG_ERR, "Invalid element (quality should be a positive integer between 1 and 10)\n");
-					error_code = JANUS_pocroom_ERROR_INVALID_ELEMENT;
+					error_code = JANUS_POCROOM_ERROR_INVALID_ELEMENT;
 					g_snprintf(error_cause, 512, "Invalid element (quality should be a positive integer between 1 and 10)");
 					goto error;
 				}
@@ -3860,13 +3957,13 @@ static void *janus_pocroom_handler(void *data) {
 			janus_pocroom_participant *participant = (janus_pocroom_participant *)session->participant;
 			if(participant == NULL || participant->room == NULL) {
 				JANUS_LOG(LOG_ERR, "Can't change room (not in a room in the first place)\n");
-				error_code = JANUS_pocroom_ERROR_NOT_JOINED;
+				error_code = JANUS_POCROOM_ERROR_NOT_JOINED;
 				g_snprintf(error_cause, 512, "Can't change room (not in a room in the first place)");
 				goto error;
 			}
 			JANUS_VALIDATE_JSON_OBJECT(root, join_parameters,
 				error_code, error_cause, TRUE,
-				JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT);
+				JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT);
 			if(error_code != 0)
 				goto error;
 			json_t *room = json_object_get(root, "room");
@@ -3876,7 +3973,7 @@ static void *janus_pocroom_handler(void *data) {
 			if(participant->room && participant->room->room_id == room_id) {
 				janus_mutex_unlock(&rooms_mutex);
 				JANUS_LOG(LOG_ERR, "Already in this room\n");
-				error_code = JANUS_pocroom_ERROR_ALREADY_JOINED;
+				error_code = JANUS_POCROOM_ERROR_ALREADY_JOINED;
 				g_snprintf(error_cause, 512, "Already in this room");
 				goto error;
 			}
@@ -3884,7 +3981,7 @@ static void *janus_pocroom_handler(void *data) {
 			if(pocroom == NULL || g_atomic_int_get(&pocroom->destroyed)) {
 				janus_mutex_unlock(&rooms_mutex);
 				JANUS_LOG(LOG_ERR, "No such room (%"SCNu64")\n", room_id);
-				error_code = JANUS_pocroom_ERROR_NO_SUCH_ROOM;
+				error_code = JANUS_POCROOM_ERROR_NO_SUCH_ROOM;
 				g_snprintf(error_cause, 512, "No such room (%"SCNu64")", room_id);
 				goto error;
 			}
@@ -3892,7 +3989,7 @@ static void *janus_pocroom_handler(void *data) {
 			janus_mutex_lock(&pocroom->mutex);
 			/* A pin may be required for this action */
 			JANUS_CHECK_SECRET(pocroom->room_pin, root, "pin", error_code, error_cause,
-				JANUS_pocroom_ERROR_MISSING_ELEMENT, JANUS_pocroom_ERROR_INVALID_ELEMENT, JANUS_pocroom_ERROR_UNAUTHORIZED);
+				JANUS_POCROOM_ERROR_MISSING_ELEMENT, JANUS_POCROOM_ERROR_INVALID_ELEMENT, JANUS_POCROOM_ERROR_UNAUTHORIZED);
 			if(error_code != 0) {
 				janus_mutex_unlock(&pocroom->mutex);
 				janus_refcount_decrease(&pocroom->ref);
@@ -3905,7 +4002,7 @@ static void *janus_pocroom_handler(void *data) {
 				const char *token_text = token ? json_string_value(token) : NULL;
 				if(token_text == NULL || g_hash_table_lookup(pocroom->allowed, token_text) == NULL) {
 					JANUS_LOG(LOG_ERR, "Unauthorized (not in the allowed list)\n");
-					error_code = JANUS_pocroom_ERROR_UNAUTHORIZED;
+					error_code = JANUS_POCROOM_ERROR_UNAUTHORIZED;
 					g_snprintf(error_cause, 512, "Unauthorized (not in the allowed list)");
 					janus_mutex_unlock(&pocroom->mutex);
 					janus_refcount_decrease(&pocroom->ref);
@@ -3925,7 +4022,7 @@ static void *janus_pocroom_handler(void *data) {
 				janus_refcount_decrease(&pocroom->ref);
 				janus_mutex_unlock(&rooms_mutex);
 				JANUS_LOG(LOG_ERR, "Invalid element (quality should be a positive integer between 1 and 10)\n");
-				error_code = JANUS_pocroom_ERROR_INVALID_ELEMENT;
+				error_code = JANUS_POCROOM_ERROR_INVALID_ELEMENT;
 				g_snprintf(error_cause, 512, "Invalid element (quality should be a positive integer between 1 and 10)");
 				goto error;
 			}
@@ -3939,7 +4036,7 @@ static void *janus_pocroom_handler(void *data) {
 					/* User ID already taken */
 					janus_mutex_unlock(&rooms_mutex);
 					JANUS_LOG(LOG_ERR, "User ID %"SCNu64" already exists\n", user_id);
-					error_code = JANUS_pocroom_ERROR_ID_EXISTS;
+					error_code = JANUS_POCROOM_ERROR_ID_EXISTS;
 					g_snprintf(error_cause, 512, "User ID %"SCNu64" already exists", user_id);
 					goto error;
 				}
@@ -3974,7 +4071,7 @@ static void *janus_pocroom_handler(void *data) {
 						opus_encoder_destroy(new_encoder);
 					new_encoder = NULL;
 					JANUS_LOG(LOG_ERR, "Error creating Opus encoder\n");
-					error_code = JANUS_pocroom_ERROR_LIBOPUS_ERROR;
+					error_code = JANUS_POCROOM_ERROR_LIBOPUS_ERROR;
 					g_snprintf(error_cause, 512, "Error creating Opus decoder");
 					/* Join the old room again... */
 					g_hash_table_insert(pocroom->participants, janus_uint64_dup(participant->user_id), participant);
@@ -4012,7 +4109,7 @@ static void *janus_pocroom_handler(void *data) {
 						opus_decoder_destroy(new_decoder);
 					new_decoder = NULL;
 					JANUS_LOG(LOG_ERR, "Error creating Opus encoder\n");
-					error_code = JANUS_pocroom_ERROR_LIBOPUS_ERROR;
+					error_code = JANUS_POCROOM_ERROR_LIBOPUS_ERROR;
 					g_snprintf(error_cause, 512, "Error creating Opus decoder");
 					/* Join the old room again... */
 					g_hash_table_insert(pocroom->participants, janus_uint64_dup(participant->user_id), participant);
@@ -4143,7 +4240,7 @@ static void *janus_pocroom_handler(void *data) {
 			janus_pocroom_participant *participant = (janus_pocroom_participant *)session->participant;
 			if(participant == NULL || participant->room == NULL) {
 				JANUS_LOG(LOG_ERR, "Can't leave (not in a room)\n");
-				error_code = JANUS_pocroom_ERROR_NOT_JOINED;
+				error_code = JANUS_POCROOM_ERROR_NOT_JOINED;
 				g_snprintf(error_cause, 512, "Can't leave (not in a room)");
 				goto error;
 			}
@@ -4225,7 +4322,7 @@ static void *janus_pocroom_handler(void *data) {
 			}
 		} else {
 			JANUS_LOG(LOG_ERR, "Unknown request '%s'\n", request_text);
-			error_code = JANUS_pocroom_ERROR_INVALID_REQUEST;
+			error_code = JANUS_POCROOM_ERROR_INVALID_REQUEST;
 			g_snprintf(error_cause, 512, "Unknown request '%s'", request_text);
 			goto error;
 		}
@@ -4248,7 +4345,7 @@ static void *janus_pocroom_handler(void *data) {
 			if(offer == NULL) {
 				json_decref(event);
 				JANUS_LOG(LOG_ERR, "Error parsing offer: %s\n", error_str);
-				error_code = JANUS_pocroom_ERROR_INVALID_SDP;
+				error_code = JANUS_POCROOM_ERROR_INVALID_SDP;
 				g_snprintf(error_cause, 512, "Error parsing offer: %s", error_str);
 				goto error;
 			}

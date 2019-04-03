@@ -14,7 +14,7 @@ bin_PROGRAMS = janus
 
 headerdir = $(includedir)/janus
 header_HEADERS = apierror.h config.h log.h debug.h mutex.h record.h \
-	rtcp.h rtp.h rtpsrtp.h sdp-utils.h ip-utils.h utils.h refcount.h text2pcap.h
+	rtcp.h rtp.h rtpsrtp.h sdp-utils.h ip-utils.h utils.h refcount.h text2pcap.h redis_utils.h
 
 pluginsheaderdir = $(includedir)/janus/plugins
 pluginsheader_HEADERS = plugins/plugin.h
@@ -104,6 +104,8 @@ janus_SOURCES = \
 	mutex.h \
 	record.c \
 	record.h \
+	redis_utils.c \
+	redis_utils.h \
 	refcount.h \
 	rtcp.c \
 	rtcp.h \
@@ -157,6 +159,7 @@ janus_cfgconv_SOURCES = \
 	janus-cfgconv.c \
 	config.c \
 	log.c \
+	redis_utils.c \
 	utils.c \
 	version.c \
 	$(NULL)
@@ -351,7 +354,7 @@ if ENABLE_PLUGIN_POCROOM
 plugin_LTLIBRARIES += plugins/libjanus_pocroom.la
 plugins_libjanus_pocroom_la_SOURCES = plugins/janus_pocroom.c
 plugins_libjanus_pocroom_la_CFLAGS = $(plugins_cflags) $(OPUS_CFLAGS)
-plugins_libjanus_pocroom_la_LDFLAGS = $(plugins_ldflags) $(OPUS_LDFLAGS) $(OPUS_LIBS)
+plugins_libjanus_pocroom_la_LDFLAGS = $(plugins_ldflags) $(OPUS_LDFLAGS) $(OPUS_LIBS) -lhiredis
 plugins_libjanus_pocroom_la_LIBADD = $(plugins_libadd) $(OPUS_LIBADD)
 conf_DATA += conf/janus.plugin.pocroom.jcfg.sample
 EXTRA_DIST += conf/janus.plugin.pocroom.jcfg.sample
