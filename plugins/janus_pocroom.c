@@ -852,7 +852,6 @@ typedef struct janus_pocroom_room {
 	int rtp_udp_sock;			/* UDP socket to use to forward RTP packets */
 	janus_refcount ref;			/* Reference counter for this room */
 	guint64 talker;				/* Who own talk right */
-	gpointer *ptalker; 
 } janus_pocroom_room;
 static GHashTable *rooms;
 static janus_mutex rooms_mutex = JANUS_MUTEX_INITIALIZER;
@@ -1928,7 +1927,6 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		}
 		pocroom->room_id = room_id;
 		pocroom->talker = 0;
-		pocroom->ptalker = NULL;
 		char *description = NULL;
 		if(desc != NULL && strlen(json_string_value(desc)) > 0) {
 			description = g_strdup(json_string_value(desc));
@@ -2579,7 +2577,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		response = json_object();
 		json_object_set_new(response, "pocroom", json_string("participants"));
 		json_object_set_new(response, "room", json_integer(room_id));
-		json_object_set_new(response, "talker", json_integer(pocroom->ptalker == NULL?0:pocroom->talker));
+		json_object_set_new(response, "talker", json_integer(pocroom->talker));
 		json_object_set_new(response, "participants", list);
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "resetdecoder")) {
@@ -2834,74 +2832,44 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
         json_t *user = json_object_get(root, "id");
         guint64 user_id = json_integer_value(user);
 
-		/* Check the talk right holder is self */
-		// if(pocroom->talker == user_id) {
-		// 	JANUS_LOG(LOG_INFO, "No need to hold talk right again\n");
-		// 	janus_mutex_unlock(&rooms_mutex);
-		// 	goto plugin_response;
-		// }
-		if(pocroom->talker == user_id) {
+		/* Check the talk held status */
+        guint64 talker_id = pocroom->talker;
+        janus_pocroom_participant *talker = g_hash_table_lookup(pocroom->participants, &talker_id);
+
+		if (talker == NULL) {
+			pocroom->talker = 0;
+		} else if (talker_id == user_id) {
+			/* Check the talk right holder is self */
 			JANUS_LOG(LOG_INFO, "No need to hold talk right again\n");
+			janus_mutex_unlock(&rooms_mutex);
+			goto plugin_response;
+		} else if (talker_id != 0 && talker_id != user_id) {
+			/* TODO Need to add error_code for tallker already existed. */
+			JANUS_LOG(LOG_INFO, "User (%"SCNu64") is the talker now\n", pocroom->talker);
+			janus_mutex_unlock(&rooms_mutex);
+			goto plugin_response;
+		} else {
+			JANUS_LOG(LOG_VERB, "Unknown condition\n");
 			janus_mutex_unlock(&rooms_mutex);
 			goto plugin_response;
 		}
 
-		
-		guint64 oldtalker_id = pocroom->talker;
-		JANUS_LOG(LOG_INFO, "talker is %"SCNu64"\n", oldtalker_id);
-		janus_pocroom_participant *test = g_hash_table_lookup(pocroom->participants, &oldtalker_id);
-		if (test == NULL)
-		{
-			JANUS_LOG(LOG_INFO, "Can't find the talk held\n");
-			pocroom->talker = 0;
-		}
-		else
-		{
-			JANUS_LOG(LOG_INFO, "talk hold id (%"SCNu64")\n", test->user_id);
-		}
-		
-
-		/* TODO Need to add error_code for tallker already existed. */
-		// if(pocroom->talker != 0 && pocroom->talker != user_id) {
-		// 	JANUS_LOG(LOG_INFO, "User (%"SCNu64") is the talker now\n", pocroom->talker);
-		// 	janus_mutex_unlock(&rooms_mutex);
-		// 	goto plugin_response;
-		// }
-
-		// if(test != NULL && pocroom->talker != user_id) {
-		// 	JANUS_LOG(LOG_INFO, "User (%"SCNu64") is the talker now\n", pocroom->talker);
-		// 	janus_mutex_unlock(&rooms_mutex);
-		// 	goto plugin_response;
-		// }
-
-		
-
 		/* Check the talk right held? if not hold it. */
         if (pocroom->talker == 0) {  //抢麦成功
-			JANUS_LOG(LOG_INFO, "hold talk right!\n");
-			janus_pocroom_participant *user = g_hash_table_lookup(pocroom->participants, &user_id);
-            pocroom->ptalker = user;
-			if (user == NULL)
-                JANUS_LOG(LOG_INFO, "Can't find user\n");
-			else
-			{
-				JANUS_LOG(LOG_INFO, "user id (%"SCNu64")\n", user->user_id);
-			}
-			pocroom->talker = user->user_id;
+			pocroom->talker = user_id;
             if(notify_events && gateway->events_is_enabled()) {
                 json_t *info = json_object();
                 json_object_set_new(info, "event", json_string("talked"));
-                json_object_set_new(info, "room", json_integer(room_id));
+                json_object_set_new(info, "room", json_integer(pocroom->room_id));
                 json_object_set_new(info, "id", json_integer(pocroom->talker));
                 gateway->notify_event(&janus_pocroom_plugin, session->handle, info);
             }
 
 			/* Tell everyone who hold talk right. added by xiej	*/
-			// janus_refcount_increase(&pocroom->ref);
 			json_t *event = json_object();
 			json_object_set_new(event, "pocroom", json_string("event"));
 			json_object_set_new(event, "room", json_integer(pocroom->room_id));
-			json_object_set_new(event, "talkholder", json_integer(user_id));
+			json_object_set_new(event, "talkholder", json_integer(pocroom->talker));
 			GHashTableIter iter;
 			gpointer value;
 			g_hash_table_iter_init(&iter, pocroom->participants);
@@ -2978,7 +2946,6 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
             }
 
 			/* Tell everyone who freed talk right. added by xiej */
-			// janus_refcount_increase(&pocroom->ref);
 			json_t *event = json_object();
 			json_object_set_new(event, "pocroom", json_string("event"));
 			json_object_set_new(event, "room", json_integer(pocroom->room_id));
