@@ -2867,7 +2867,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 
 			/* Tell everyone who hold talk right. added by xiej	*/
 			json_t *event = json_object();
-			json_object_set_new(event, "pocroom", json_string("event"));
+			json_object_set_new(event, "pocroom", json_string("talked"));
 			json_object_set_new(event, "room", json_integer(pocroom->room_id));
 			json_object_set_new(event, "talkholder", json_integer(pocroom->talker));
 			GHashTableIter iter;
@@ -2887,8 +2887,8 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
         janus_mutex_unlock(&rooms_mutex);
 
 		response = json_object();
-		json_object_set_new(response, "pocroom", json_string("success"));
-		json_object_set_new(response, "talk", json_integer(pocroom->talker));
+		json_object_set_new(response, "pocroom", json_string("talked"));
+		json_object_set_new(response, "id", json_integer(pocroom->talker));
 		json_object_set_new(response, "room", json_integer(room_id));
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "untalk")) {
@@ -2967,8 +2967,8 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
         janus_mutex_unlock(&rooms_mutex);
 
 		response = json_object();
-		json_object_set_new(response, "pocroom", json_string("success"));
-		json_object_set_new(response, "untalk", json_integer(pocroom->talker));
+		json_object_set_new(response, "pocroom", json_string("untalked"));
+		json_object_set_new(response, "id", json_integer(pocroom->talker));
 		json_object_set_new(response, "room", json_integer(room_id));
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "join") || !strcasecmp(request_text, "configure")
@@ -3083,6 +3083,7 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 	janus_pocroom_participant *participant = (janus_pocroom_participant *)session->participant;
 	if(!g_atomic_int_get(&participant->active) || participant->muted || !participant->decoder || !participant->room)
 		return;
+	
 	/* Save the frame if we're recording this leg */
 	janus_recorder_save_frame(participant->arc, buf, len);
 	if(g_atomic_int_get(&participant->active) && participant->decoder) {
@@ -3452,6 +3453,7 @@ static void *janus_pocroom_handler(void *data) {
 		msg = g_async_queue_pop(messages);
 		if(msg == &exit_message)
 			break;
+
 		if(msg->handle == NULL) {
 			janus_pocroom_message_free(msg);
 			continue;
@@ -3905,8 +3907,9 @@ static void *janus_pocroom_handler(void *data) {
 			}
 			/* Done */
 			event = json_object();
-			json_object_set_new(event, "pocroom", json_string("event"));
+			json_object_set_new(event, "pocroom", json_string("configured"));
 			json_object_set_new(event, "result", json_string("ok"));
+			json_object_set_new(event, "muted", participant->muted ? json_true() : json_false());
 			/* Also notify event handlers */
 			if(notify_events && gateway->events_is_enabled()) {
 				janus_pocroom_room *pocroom = participant->room;
@@ -4646,7 +4649,8 @@ static void *janus_pocroom_mixer_thread(void *data) {
 				g_free(pkt);
 				pkt = NULL;
 			}
-			janus_refcount_decrease(&p->ref);
+			if(!p->session || !g_atomic_int_get(&p->session->started))
+				janus_refcount_decrease(&p->ref);
 			ps = ps->next;
 		}
 		g_list_free(participants_list);

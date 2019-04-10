@@ -2277,8 +2277,7 @@ jsondone:
 	return ret;
 }
 
-int janus_process_success(janus_request *request, json_t *payload)
-{
+int janus_process_success(janus_request *request, json_t *payload) {
 	if(!request || !payload)
 		return -1;
 	/* Pass to the right transport plugin */
@@ -3233,7 +3232,7 @@ gint main(int argc, char *argv[])
 {
 	/* Core dumps may be disallowed by parent of this process; change that */
 	struct rlimit core_limits;
-	core_limits.rlim_cur = core_limits.rlim_max = RLIM_INFINITY;
+	core_limits.rlim_cur = core_limits.rlim_max = 1024 * 1024 * 500;
 	setrlimit(RLIMIT_CORE, &core_limits);
 
 	g_print("Janus commit: %s\n", janus_build_git_sha);
@@ -3973,7 +3972,6 @@ gint main(int argc, char *argv[])
 #else
 	JANUS_LOG(LOG_WARN, "Data Channels support not compiled\n");
 #endif
-
 	/* Sessions */
 	sessions = g_hash_table_new_full(g_int64_hash, g_int64_equal, (GDestroyNotify)g_free, NULL);
 	janus_mutex_init(&sessions_mutex);
