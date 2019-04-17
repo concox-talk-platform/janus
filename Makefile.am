@@ -14,7 +14,7 @@ bin_PROGRAMS = janus
 
 headerdir = $(includedir)/janus
 header_HEADERS = apierror.h config.h log.h debug.h mutex.h record.h \
-	rtcp.h rtp.h rtpsrtp.h sdp-utils.h ip-utils.h utils.h refcount.h text2pcap.h redis_utils.h
+	rtcp.h rtp.h rtpsrtp.h sdp-utils.h ip-utils.h utils.h refcount.h text2pcap.h redispool.h
 
 pluginsheaderdir = $(includedir)/janus/plugins
 pluginsheader_HEADERS = plugins/plugin.h
@@ -104,8 +104,7 @@ janus_SOURCES = \
 	mutex.h \
 	record.c \
 	record.h \
-	redis_utils.c \
-	redis_utils.h \
+	redispool.h \
 	refcount.h \
 	rtcp.c \
 	rtcp.h \
@@ -159,7 +158,6 @@ janus_cfgconv_SOURCES = \
 	janus-cfgconv.c \
 	config.c \
 	log.c \
-	redis_utils.c \
 	utils.c \
 	version.c \
 	$(NULL)
