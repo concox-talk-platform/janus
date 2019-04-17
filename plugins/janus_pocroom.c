@@ -624,15 +624,16 @@ room-<unique room ID>: {
 #include <opus/opus.h>
 #include <sys/time.h>
 
-#include "../debug.h"
+
 #include "../apierror.h"
 #include "../config.h"
+#include "../debug.h"
 #include "../mutex.h"
-#include "../redis_utils.h"
+#include "../record.h"
+#include "../redispool.h"
+#include "../rtcp.h"
 #include "../rtp.h"
 #include "../rtpsrtp.h"
-#include "../rtcp.h"
-#include "../record.h"
 #include "../sdp-utils.h"
 #include "../utils.h"
 
@@ -1486,25 +1487,10 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 		/* Done: we keep the configuration file open in case we get a "create" or "destroy" with permanent=true */
 	}
 
-	/* Read redis config */
-	g_snprintf(filename, 255, "%s/%s.jcfg", config_path, "janus.redis");
-	JANUS_LOG(LOG_VERB, "Configuration file: %s\n", filename);
-	janus_config *redisconfig = janus_config_parse(filename);
-	if(redisconfig == NULL) {
-		JANUS_LOG(LOG_WARN, "Couldn't find .jcfg configuration file (%s), trying .cfg\n", "janus.redis");
-		g_snprintf(filename, 255, "%s/%s.cfg", config_path, "janus.redis");
-		JANUS_LOG(LOG_VERB, "Configuration file: %s\n", filename);
-		redisconfig = janus_config_parse(filename);
-	}
-
-	if(redisconfig != NULL)
-		janus_config_print(redisconfig);
-
-	/* Parse configuration to populate the rooms list */
-
-	if(redisconfig != NULL) {
-		redisContext* c = janus_redis_connect_config(filename);
-		/* Iterate on all redisReplys*/
+	/* Init redis poc rooms */
+	redisContext* c = getContext();
+	/* Iterate on all redisReplys */
+	if(c != NULL) {
 		redisReply* reply = (redisReply *)redisCommand(c, "keys grp:*:mem");//TODO
 		if (reply->type == REDIS_REPLY_ERROR || reply == NULL) {
 			JANUS_LOG(LOG_WARN, "Can not get groups' info from redis, it's ok?\n");
@@ -1526,11 +1512,11 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 					guint64 room_id = atoi(idStr);
 		
 					if (room_id < 0 || room_id == 0) {
-						printf("fatal room_id %d\n", room_id);
+						JANUS_LOG(LOG_WARN, "fatal room_id %d\n", room_id);
 						++pos;
 						continue;
 					}
-					JANUS_LOG(LOG_INFO, "room id %d\n", room_id);
+					JANUS_LOG(LOG_VERB, "room id %d.\n", room_id);
 					
 					janus_pocroom_room *pocroom = g_malloc0(sizeof(janus_pocroom_room));
 					pocroom->room_id = room_id;
@@ -1576,9 +1562,13 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 			}
 		}
 		freeReplyObject(reply);
-		redisFree(c);
-		/* Done: we keep the configuration file open in case we get a "create" or "destroy" with permanent=true */
-	}/* End redis reading */
+	}
+	else {
+		JANUS_LOG(LOG_WARN, "Can't get redispool instance.\n");
+	}
+	retConnect(c);
+	/* Done: we keep the configuration file open in case we get a "create" or "destroy" with permanent=true */
+	/* End redis reading */
 
 	/* Show available rooms */
 	janus_mutex_lock(&rooms_mutex);

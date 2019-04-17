@@ -17,27 +17,27 @@
 
 #include <dlfcn.h>
 #include <dirent.h>
+#include <getopt.h>
+#include <fcntl.h>
 #include <net/if.h>
 #include <netdb.h>
+#include <poll.h>
 #include <signal.h>
-#include <getopt.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-#include <poll.h>
 
-#include "janus.h"
-#include "version.h"
+#include "apierror.h"
+#include "auth.h"
 #include "cmdline.h"
 #include "config.h"
-#include "apierror.h"
 #include "debug.h"
-#include "ip-utils.h"
-#include "rtcp.h"
-#include "auth.h"
-#include "record.h"
 #include "events.h"
-
+#include "ip-utils.h"
+#include "janus.h"
+#include "record.h"
+#include "redispool.h"
+#include "rtcp.h"
+#include "version.h"
 
 #define JANUS_NAME				"Janus WebRTC Server"
 #define JANUS_AUTHOR			"Meetecho s.r.l."
@@ -569,6 +569,7 @@ janus_session *janus_session_create(guint64 session_id) {
 	janus_mutex_lock(&sessions_mutex);
 	g_hash_table_insert(sessions, janus_uint64_dup(session->session_id), session);
 	janus_mutex_unlock(&sessions_mutex);
+
 	return session;
 }
 
@@ -1374,6 +1375,7 @@ int janus_process_incoming_request(janus_request *request) {
 			json_object_set_new(plugin_data, "plugin", json_string(plugin_t->get_package()));
 			json_object_set_new(plugin_data, "data", result->content);
 			json_object_set_new(reply, "plugindata", plugin_data);
+
 			/* Send the success reply */
 			ret = janus_process_success(request, reply);
 		} else if(result->type == JANUS_PLUGIN_OK_WAIT) {
@@ -3226,7 +3228,6 @@ gboolean janus_plugin_auth_signature_contains(janus_plugin *plugin, const char *
 	return janus_auth_check_signature_contains(token, plugin->get_package(), descriptor);
 }
 
-
 /* Main */
 gint main(int argc, char *argv[])
 {
@@ -3279,6 +3280,7 @@ gint main(int argc, char *argv[])
 			}
 		}
 	}
+
 	/* Pre-fetch some categories (creates them if they don't exist) */
 	janus_config_category *config_general = janus_config_get_create(config, NULL, janus_config_type_category, "general");
 	janus_config_category *config_certs = janus_config_get_create(config, NULL, janus_config_type_category, "certificates");
@@ -4002,6 +4004,11 @@ gint main(int argc, char *argv[])
 	/* Wait 120 seconds before stopping idle threads to avoid the creation of too many threads for AddressSanitizer. */
 	g_thread_pool_set_max_idle_time(120 * 1000);
 
+	/* Load redis pool */
+	char redis_config[255];
+	g_snprintf(redis_config, 255, "%s/janus.transport.redis.jcfg", configs_folder);
+	redispool_init(redis_config);
+
 	/* Load event handlers */
 	const char *path = NULL;
 	DIR *dir = NULL;
@@ -4377,6 +4384,7 @@ gint main(int argc, char *argv[])
 			if(transports == NULL)
 				transports = g_hash_table_new(g_str_hash, g_str_equal);
 			g_hash_table_insert(transports, (gpointer)janus_transport->get_package(), janus_transport);
+
 			if(transports_so == NULL)
 				transports_so = g_hash_table_new(g_str_hash, g_str_equal);
 			g_hash_table_insert(transports_so, (gpointer)janus_transport->get_package(), transport);
@@ -4478,6 +4486,9 @@ gint main(int argc, char *argv[])
 		g_hash_table_foreach(plugins_so, janus_pluginso_close, NULL);
 		g_hash_table_destroy(plugins_so);
 	}
+
+	JANUS_LOG(LOG_INFO, "Closing redis pool.\n");
+	redispool_destroy();
 
 	JANUS_LOG(LOG_INFO, "Closing event handlers:\n");
 	janus_events_deinit();
