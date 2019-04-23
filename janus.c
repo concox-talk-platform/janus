@@ -39,6 +39,8 @@
 #include "rtcp.h"
 #include "version.h"
 
+#include "user_com.h"
+
 #define JANUS_NAME				"Janus WebRTC Server"
 #define JANUS_AUTHOR			"Meetecho s.r.l."
 #define JANUS_SERVER_NAME		"MyJanusInstance"
@@ -821,6 +823,16 @@ int janus_process_incoming_request(janus_request *request) {
 		ret = janus_process_error_string(request, session_id, NULL, error_code, error_cause);
 		goto jsondone;
 	}
+
+	//add by tesion
+	char * res = NULL;
+	res = json_dumps(root, JSON_PRESERVE_ORDER);
+	printf("\n=====> Janus Process InComming Request <=====\n");
+	printf("#Request: (%s)\n", res);
+	printf("<----------------------------------------------->\n");
+	free(res);
+	// end
+
 	json_t *transaction = json_object_get(root, "transaction");
 	const gchar *transaction_text = json_string_value(transaction);
 	json_t *message = json_object_get(root, "janus");
@@ -888,6 +900,20 @@ int janus_process_incoming_request(janus_request *request) {
 			json_object_set_new(transport, "id", json_string(id));
 			janus_events_notify_handlers(JANUS_EVENT_TYPE_SESSION, session_id, "created", transport);
 		}
+
+		// add 2019/04/22
+		json_t *puid = json_object_get(root, "uid");
+		if (puid) {
+			guint64 uid = json_integer_value(puid);
+			E_SESSION_ERR err = add_user_session(uid, session_id);
+			if (E_OK != err) {
+				LOGD("add user session error: %d\n", err);
+			} else {
+				LOGD("add user(%llu) ---> session(%llu)\n", uid, session_id);
+			}
+		}
+		// end
+
 		/* Prepare JSON reply */
 		json_t *reply = janus_create_message("success", 0, transaction_text);
 		json_t *data = json_object();
@@ -1015,6 +1041,15 @@ int janus_process_incoming_request(janus_request *request) {
 		}
 		/* Schedule the session for deletion */
 		janus_session_destroy(session);
+
+		// add 清除session
+		json_t *puid = json_object_get(root, "uid");
+		if (puid) {
+			guint64 uid = json_integer_value(puid);
+			del_user_session(uid);
+			LOGD("user(%llu) destroyed.\n", uid);
+		}
+		// end
 
 		/* Prepare JSON reply */
 		json_t *reply = janus_create_message("success", session_id, transaction_text);
@@ -1486,6 +1521,53 @@ trickledone:
 		json_t *reply = janus_create_message("ack", session_id, transaction_text);
 		/* Send the success reply */
 		ret = janus_process_success(request, reply);
+	} else if (!strcasecmp(message_text, "user_call")) {
+		json_t * puid = json_object_get(root, "uid");
+		json_t * ptype = json_object_get(root, "type");
+		if (!puid) {
+			ret = -1;
+			LOGD("no uid field in json object\n");
+			goto jsondone;
+		}
+
+		guint64 uid = json_integer_value(puid);
+		ret = send_user_call(uid, root);
+		json_t *reply = NULL;
+		if (0 != ret) {
+			LOGD("send user(%llu) call error, code: %d\n", uid, ret);
+			reply = janus_create_message("error", session_id, transaction_text);
+			json_object_set_new(reply, "code", json_integer(ret));
+		} else {
+			LOGD("send message to user(%llu) ok.\n", uid);
+			reply = janus_create_message("success", session_id, transaction_text);
+		}
+
+		ret = send_process_rsp(request, reply);
+	} else if (!strcasecmp(message_text, "get_session")) {
+		json_t * puid = json_object_get(root, "uid");
+		if (!puid) {
+			ret = -1;
+			LOGD("no uid field in json object.\n");
+			goto jsondone;
+		}
+
+		guint64 uid = json_integer_value(puid);
+		user_session * sess = get_user_session(uid);
+		json_t *reply = json_object();
+
+		int code = 0;
+		guint64 ssid = 0;
+		if (!sess) {
+			LOGD("no session for user(%llu)\n", uid);
+			code = -1;
+			json_object_set_new(reply, "msg", "no session id found");
+		} else {
+			ssid = sess->session_id;
+		}
+
+		json_object_set_new(reply, "code", json_integer(code));
+		json_object_set_new(reply, "session_id", json_integer(ssid));
+		ret = send_process_rsp(request, reply);
 	} else {
 		ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNKNOWN_REQUEST, "Unknown request '%s'", message_text);
 	}
@@ -1497,6 +1579,47 @@ jsondone:
 	if(session != NULL)
 		janus_refcount_decrease(&session->ref);
 	return ret;
+}
+
+int send_user_call(guint64 uid, json_t * req) {
+	if (NULL == req) {
+		LOGD("empty request json object\n");
+		return -1;
+	}
+
+	user_session * sess = get_user_session(uid);
+	if (NULL == sess) {
+		LOGD("can't find user(%llu) session on the server\n", uid);
+		return 1;
+	}
+
+	janus_session * sp = janus_session_find(sess->session_id);
+	if (NULL == sp) {
+		LOGD("can't get session(%llu) for user(%llu)\n", sess->session_id, uid);
+		return 2;
+	}
+
+	if (NULL == sp->source) {
+		LOGD("the source of session(%llu) is null", sess->session_id);
+		return 3;
+	}
+
+	json_incref(req);
+	int ret = sp->source->transport->send_message(sp->source->instance, NULL, FALSE, req);
+	if (0 != ret) {
+		LOGD("send message to session(%llu) for user(%llu) error, code: %d\n", sess->session_id, uid, ret);
+		return 4;
+	}
+
+	return 0;
+}
+
+int send_process_rsp(janus_request *request, json_t *payload) {
+	if (!request || !payload) {
+		return -1;
+	}
+
+	return request->transport->send_message(request->instance, request->request_id, request->admin, payload);
 }
 
 static json_t *janus_json_token_plugin_array(const char *token_value) {
@@ -3239,6 +3362,12 @@ gint main(int argc, char *argv[])
 	g_print("Janus commit: %s\n", janus_build_git_sha);
 	g_print("Compiled on:  %s\n\n", janus_build_git_time);
 
+	// init user session map
+	if (!init_user_session()) {
+		LOGD("init user session fail\n");
+		exit(1);
+	}
+
 	struct gengetopt_args_info args_info;
 	/* Let's call our cmdline parser */
 	if(cmdline_parser(argc, argv, &args_info) != 0)
@@ -4426,6 +4555,9 @@ gint main(int argc, char *argv[])
 		/* Loop until we have to stop */
 		usleep(250000); /* A signal will cancel usleep() but not g_usleep() */
 	}
+
+	// release user session
+	release_user_session();
 
 	/* If the Event Handlers mechanism is enabled, notify handlers that Janus is hanging up */
 	if(janus_events_is_enabled()) {

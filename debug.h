@@ -110,4 +110,19 @@ do { \
 } while (0)
 ///@}
 
+#define JANUS_DEBUG(format, args...) JANUS_LOG(LOG_DBG, format, ##args)
+#define JANUS_ERROR(format, args...) JANUS_LOG(LOG_ERR, format, ##args)
+
+#define LOGD(format, ...) \
+do {\
+	char time_buf[32] = ""; \
+	char buf[256] = ""; \
+	time_t t = time(NULL); \
+	struct tm tms; \
+	localtime_r(&t, &tms); \
+	snprintf(time_buf, sizeof(time_buf), "[%d-%02d-%02d %02d:%02d:%02d]", tms.tm_year + 1900, tms.tm_mon+1, tms.tm_mday, tms.tm_hour, tms.tm_min, tms.tm_sec); \
+	snprintf(buf, sizeof(buf), "[%s:%s:%d]", __FILE__, __FUNCTION__, __LINE__); \
+	printf("[DEBUG]%s%s" format, time_buf, buf, ##__VA_ARGS__); \
+} while (0)
+
 #endif
