@@ -1536,6 +1536,21 @@ static void *janus_videocall_handler(void *data) {
 				}
 				janus_mutex_unlock(&session->rec_mutex);
 			}
+
+			JANUS_LOG(LOG_INFO, "=======================>%s\n", __FUNCTION__);
+			// TODO Also notify our peer too.
+			if(peer != NULL) {
+				/* Send event to our peer too */
+				json_t *notify = json_object();
+				json_object_set_new(notify, "event", json_string("notified"));
+				json_object_set_new(notify, "audio", session->audio_active ? json_true() : json_false());
+				json_object_set_new(notify, "video", session->video_active ? json_true() : json_false());
+				int ret = gateway->push_event(peer->handle, &janus_videocall_plugin, NULL, notify, NULL);
+				JANUS_LOG(LOG_INFO, "  >> Pushing event to peer: %d (%s)\n", ret, janus_get_api_error(ret));
+				json_decref(notify);
+			}
+			JANUS_LOG(LOG_INFO, "<=======================\n");
+			
 			/* Also notify event handlers */
 			if(notify_events && gateway->events_is_enabled()) {
 				json_t *info = json_object();

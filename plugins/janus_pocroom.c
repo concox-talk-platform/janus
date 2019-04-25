@@ -3387,7 +3387,11 @@ static void janus_pocroom_hangup_media_internal(janus_plugin_session *handle) {
 	janus_mutex_lock(&participant->qmutex);
 	g_atomic_int_set(&participant->active, 0);
 	participant->muted = TRUE;
-	g_free(participant->display);
+	
+	// add check 2019/04/24
+	if (participant && participant->display)
+		g_free(participant->display);
+
 	participant->display = NULL;
 	participant->prebuffering = TRUE;
 	/* Make sure we're not using the encoder/decoder right now, we're going to destroy them */

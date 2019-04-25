@@ -254,4 +254,11 @@ void janus_set_public_ip(const char *ip);
 gint janus_is_stopping(void);
 
 
+// add 2019/04/22
+int send_user_call(guint64 uid, json_t * req);
+
+int send_process_rsp(janus_request *request, json_t *payload);
+
+const char * code2msg(int code);
+
 #endif

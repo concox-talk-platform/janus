@@ -26,6 +26,8 @@ E_SESSION_ERR  add_user_session(guint64 uid, guint64 session);
 
 bool del_user_session(guint64 uid);
 
+bool del_user_by_session(guint64 session_id);
+
 user_session * get_user_session(guint64 uid);
 
 void release_user_session();

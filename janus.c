@@ -499,6 +499,11 @@ static gboolean janus_check_sessions(gpointer user_data) {
 					((g_atomic_int_get(&session->transport_gone) && now - session->last_activity >= (gint64)reclaim_session_timeout * G_USEC_PER_SEC) &&
 							!g_atomic_int_compare_and_exchange(&session->timeout, 0, 1))) {
 				JANUS_LOG(LOG_INFO, "Timeout expired for session %"SCNu64"...\n", session->session_id);
+
+				// add 2019/04/24
+				LOGD("\n[DEBUG] timeout expired del_user_by_session(%llu)...\n", session->session_id);
+				del_user_by_session(session->session_id);
+				// end
 				/* Mark the session as over, we'll deal with it later */
 				janus_session_handles_clear(session);
 				/* Notify the transport */
@@ -514,7 +519,7 @@ static gboolean janus_check_sessions(gpointer user_data) {
 
 				/* FIXME Is this safe? apparently it causes hash table errors on the console */
 				g_hash_table_iter_remove(&iter);
-
+				LOGD("=====> Check Session Timeout, Destroy session(%llu)\n", session->session_id);
 				janus_session_destroy(session);
 			}
 		}
@@ -820,6 +825,7 @@ int janus_process_incoming_request(janus_request *request) {
 		error_code, error_cause, FALSE,
 		JANUS_ERROR_MISSING_MANDATORY_ELEMENT, JANUS_ERROR_INVALID_ELEMENT_TYPE);
 	if(error_code != 0) {
+		LOGD("[Error] janus json object check error(%d): %s\n", error_code, error_cause);
 		ret = janus_process_error_string(request, session_id, NULL, error_code, error_cause);
 		goto jsondone;
 	}
@@ -1040,6 +1046,7 @@ int janus_process_incoming_request(janus_request *request) {
 			session->source->transport->session_over(session->source->instance, session->session_id, FALSE, FALSE);
 		}
 		/* Schedule the session for deletion */
+		LOGD("=====> Request Destroy...\n");
 		janus_session_destroy(session);
 
 		// add 清除session
@@ -1532,15 +1539,23 @@ trickledone:
 
 		guint64 uid = json_integer_value(puid);
 		ret = send_user_call(uid, root);
-		json_t *reply = NULL;
+	
+		json_t *reply = janus_create_message("user_called", session_id, transaction_text);
+		json_object_set_new(reply, "code", json_integer(ret));
+		json_object_set_new(reply, "msg", json_string(code2msg(ret)));
 		if (0 != ret) {
 			LOGD("send user(%llu) call error, code: %d\n", uid, ret);
-			reply = janus_create_message("error", session_id, transaction_text);
-			json_object_set_new(reply, "code", json_integer(ret));
 		} else {
 			LOGD("send message to user(%llu) ok.\n", uid);
-			reply = janus_create_message("success", session_id, transaction_text);
 		}
+
+		LOGD("---------Send Response--------\n");
+		char * res = NULL;
+		res = json_dumps(reply, JSON_PRESERVE_ORDER);
+		printf("\n=====> Janus Response <=====\n");
+		printf("#Response: (%s)\n", res);
+		printf("<----------------------------------------------->\n");
+		free(res);
 
 		ret = send_process_rsp(request, reply);
 	} else if (!strcasecmp(message_text, "get_session")) {
@@ -1605,6 +1620,7 @@ int send_user_call(guint64 uid, json_t * req) {
 	}
 
 	json_incref(req);
+	LOGD("=====[DEBUG] ready to send to  user(%llu)...\n", uid);
 	int ret = sp->source->transport->send_message(sp->source->instance, NULL, FALSE, req);
 	if (0 != ret) {
 		LOGD("send message to session(%llu) for user(%llu) error, code: %d\n", sess->session_id, uid, ret);
@@ -1619,7 +1635,35 @@ int send_process_rsp(janus_request *request, json_t *payload) {
 		return -1;
 	}
 
-	return request->transport->send_message(request->instance, request->request_id, request->admin, payload);
+	json_incref(payload);
+	LOGD("-----> Ready to send ...\n");
+	int ret = request->transport->send_message(request->instance, request->request_id, request->admin, payload);
+	if (0 != ret) {
+		LOGD("send response fail, code: %d\n", ret);
+	} else {
+		LOGD("send response ok.\n");
+	}
+
+	return ret;
+}
+
+const char * code2msg(int code) {
+	switch (code) {
+	case 0:
+		return "success";
+	case -1:
+		return "json object is null";
+	case 1:
+		return "user is not online";
+	case 2:
+		return "can't find user session";
+	case 3:
+		return "user request is null";
+	case 4:
+		return "send to user fail";
+	default:
+		return "unknown msg code";
+	}
 }
 
 static json_t *janus_json_token_plugin_array(const char *token_value) {
@@ -2717,6 +2761,7 @@ void janus_transport_gone(janus_transport *plugin, janus_transport_session *tran
 				JANUS_LOG(LOG_VERB, "  -- Session %"SCNu64" will be over if not reclaimed\n", session->session_id);
 				JANUS_LOG(LOG_VERB, "  -- Marking Session %"SCNu64" as over\n", session->session_id);
 				if(reclaim_session_timeout < 1) { /* Reclaim session timeouts are disabled */
+					LOGD("=====> Transport gone, Destroy session(%llu).\n", session->session_id);
 					/* Mark the session as destroyed */
 					janus_session_destroy(session);
 					g_hash_table_iter_remove(&iter);
