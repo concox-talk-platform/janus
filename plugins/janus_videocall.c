@@ -444,6 +444,8 @@ static void janus_videocall_message_free(janus_videocall_message *msg) {
 #define JANUS_VIDEOCALL_ERROR_MISSING_SDP			482
 #define JANUS_VIDEOCALL_ERROR_INVALID_SDP			483
 
+#define DEFAULT_BITRATE 1000
+
 
 /* Plugin implementation */
 int janus_videocall_init(janus_callbacks *callback, const char *config_path) {
@@ -999,6 +1001,10 @@ static void *janus_videocall_handler(void *data) {
 			janus_videocall_message_free(msg);
 			continue;
 		}
+
+		// add 2019/04/25
+		LOGD("---> Session Info: username(%s), bitrate(%lu), slowlink_count(%u)\n", session->username, session->bitrate, session->slowlink_count);
+		// end
 		/* Handle request */
 		error_code = 0;
 		root = msg->message;
@@ -1060,6 +1066,15 @@ static void *janus_videocall_handler(void *data) {
 				JANUS_VIDEOCALL_ERROR_MISSING_ELEMENT, JANUS_VIDEOCALL_ERROR_INVALID_ELEMENT);
 			if(error_code != 0)
 				goto error;
+
+			// add 2019/04/25
+			json_t * bitrate = json_object_get(root, "bitrate");
+			session->bitrate = DEFAULT_BITRATE;	// 默认比特率: 1000
+			if (bitrate) {
+				session->bitrate = json_integer_value(bitrate);
+			}
+			// end
+
 			json_t *username = json_object_get(root, "username");
 			const char *username_text = json_string_value(username);
 			janus_mutex_lock(&sessions_mutex);

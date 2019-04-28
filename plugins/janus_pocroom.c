@@ -623,6 +623,7 @@ room-<unique room ID>: {
 #include <jansson.h>
 #include <opus/opus.h>
 #include <sys/time.h>
+#include <stdbool.h>
 
 
 #include "../apierror.h"
@@ -853,6 +854,12 @@ typedef struct janus_pocroom_room {
 	int rtp_udp_sock;			/* UDP socket to use to forward RTP packets */
 	janus_refcount ref;			/* Reference counter for this room */
 	guint64 talker;				/* Who own talk right */
+
+	// add 2019/04/26
+	FILE * fp;
+	char fname[128];
+	bool record_user;
+	// end
 } janus_pocroom_room;
 static GHashTable *rooms;
 static janus_mutex rooms_mutex = JANUS_MUTEX_INITIALIZER;
@@ -918,6 +925,134 @@ typedef struct janus_pocroom_rtp_relay_packet {
 	uint16_t seq_number;
 	gboolean silence;
 } janus_pocroom_rtp_relay_packet;
+
+/* Helper struct to generate and parse WAVE headers */
+typedef struct wav_header {
+	char riff[4];
+	uint32_t len;
+	char wave[4];
+	char fmt[4];
+	uint32_t formatsize;
+	uint16_t format;
+	uint16_t channels;
+	uint32_t samplerate;
+	uint32_t avgbyterate;
+	uint16_t samplebytes;
+	uint16_t channelbits;
+	char data[4];
+	uint32_t blocksize;
+} wav_header;
+
+
+// add record user audio stream data 2019/04/26
+void clean_talk_file(janus_pocroom_room * room) {
+	if (!room) return;
+
+	room->fp = NULL;
+	memset(room->fname, 0, sizeof(room->fname));
+}
+
+void set_talk_file_name(char * src, guint64 room_id, guint64 user_id) {
+	if (!src) return;
+	time_t tm = time(NULL);
+	sprintf(src, "room_%llu_user_%llu_%ld.wav", room_id, user_id, tm);
+	LOGD("[DEBUG] set talk file to %s\n", src);
+}
+
+void set_talk_file_record(janus_pocroom_room * room, bool record) {
+	if (!room) return;
+
+	room->record_user = record;
+}
+
+void close_talk_file(janus_pocroom_room * room) {
+	if (!room || !room->fp) return;
+	/* Update the length in the header */
+	LOGD("[DEBUG] before close talk file(%s), update wav header...\n", room->fname);
+	fseek(room->fp, 0, SEEK_END);
+	long int size = ftell(room->fp);
+	if(size >= 8) {
+		size -= 8;
+		fseek(room->fp, 4, SEEK_SET);
+		fwrite(&size, sizeof(uint32_t), 1, room->fp);
+		size += 8;
+		fseek(room->fp, 40, SEEK_SET);
+		fwrite(&size, sizeof(uint32_t), 1, room->fp);
+		fflush(room->fp);
+	}
+
+	LOGD("[DEBUG] close talk file(%s)\n", room->fname);
+	fclose(room->fp);
+	clean_talk_file(room);
+}
+
+bool reset_talk_file(janus_pocroom_room * room) {
+	if (!room) {
+		return false;
+	}
+
+	if (room->fp) {
+		close_talk_file(room);
+	}
+
+	set_talk_file_name(room->fname, room->room_id, room->talker);
+
+	room->fp = fopen(room->fname, "wb");
+	if (!room->fp) {
+		LOGD("[DEBUG] fopen(%s) error: %d\n", room->fname, errno);
+		return false;
+	}
+
+	LOGD("[DEBUG] open talk file(%s) ok.\n", room->fname);
+	/* Write WAV header */
+	wav_header header = {
+		{'R', 'I', 'F', 'F'},
+		0,
+		{'W', 'A', 'V', 'E'},
+		{'f', 'm', 't', ' '},
+		16,
+		1,
+		1,
+		room->sampling_rate,
+		room->sampling_rate * 2,
+		2,
+		16,
+		{'d', 'a', 't', 'a'},
+		0
+	};
+	if(fwrite(&header, 1, sizeof(header), room->fp) != sizeof(header)) {
+		LOGD("[DEBUG] Error writing WAV header...\n");
+		close_talk_file(room);
+		return false;
+	}
+
+	fflush(room->fp);
+	LOGD("[DEBUG] write talk file(%s) wav header ok.\n", room->fname);
+
+	return true;
+}
+
+bool write_talk_file(janus_pocroom_room * room, const char * buf, int len) {
+	if (!room) {
+		LOGD("[ERROR] room is null\n");
+		return false;
+	}
+
+	if (!room->fp) {
+		LOGD("[ERROR] room(%llu) fp is null\n", room->room_id);
+		return false;
+	}
+
+	int ret = fwrite(buf, 1, len, room->fp);
+	fflush(room->fp);
+	LOGD("[DEBUG] write %d byte(s) to talk file(%s), input len= %d.\n", ret, room->fname, len);
+	
+	if (ret != len) {
+		LOGD("[ERROR] write to talk file(%s) error.\n", room->fname);
+	}
+	return true;
+}
+// end
 
 
 static void janus_pocroom_participant_destroy(janus_pocroom_participant *participant) {
@@ -1005,6 +1140,13 @@ static void janus_pocroom_room_free(const janus_refcount *pocroom_ref) {
 	if(pocroom->rtp_encoder)
 		opus_encoder_destroy(pocroom->rtp_encoder);
 	g_hash_table_destroy(pocroom->rtp_forwarders);
+
+	// add 2019/04/26
+	if (pocroom->fp) {
+		close_talk_file(pocroom);
+	}
+	// end
+
 	g_free(pocroom);
 }
 
@@ -1137,22 +1279,7 @@ static gint janus_pocroom_rtp_sort(gconstpointer a, gconstpointer b) {
 	return 0;
 }
 
-/* Helper struct to generate and parse WAVE headers */
-typedef struct wav_header {
-	char riff[4];
-	uint32_t len;
-	char wave[4];
-	char fmt[4];
-	uint32_t formatsize;
-	uint16_t format;
-	uint16_t channels;
-	uint32_t samplerate;
-	uint32_t avgbyterate;
-	uint16_t samplebytes;
-	uint16_t channelbits;
-	char data[4];
-	uint32_t blocksize;
-} wav_header;
+
 
 
 /* Mixer settings */
@@ -1181,6 +1308,9 @@ typedef struct wav_header {
 #define JANUS_POCROOM_ERROR_ALREADY_JOINED	491
 #define JANUS_POCROOM_ERROR_NO_SUCH_USER	492
 #define JANUS_POCROOM_ERROR_INVALID_SDP		493
+
+
+
 
 static int janus_pocroom_create_udp_socket_if_needed(janus_pocroom_room *pocroom) {
 	if(pocroom->rtp_udp_sock > 0) {
@@ -1382,6 +1512,14 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 			}
 			/* Create the audio bridge room */
 			janus_pocroom_room *pocroom = g_malloc0(sizeof(janus_pocroom_room));
+
+			// add 2019/04/26
+			janus_config_item * record_user = janus_config_get(config, cat, janus_config_type_item, "record_user");
+			bool need_record = record_user && record_user->value && janus_is_true(record_user->value);
+			set_talk_file_record(pocroom, need_record);
+			clean_talk_file(pocroom);
+			// end
+
 			const char *room_num = cat->name;
 			if(strstr(room_num, "room-") == room_num)
 				room_num += 5;
@@ -2855,6 +2993,15 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
                 gateway->notify_event(&janus_pocroom_plugin, session->handle, info);
             }
 
+			// add 设置打开talk录音文件 2019/04/26
+			if (pocroom->record_user) {
+				LOGD("[DEBUG] user(%llu) get talk...\n", pocroom->talker);
+				if (!reset_talk_file(pocroom)) {
+					LOGD("[DEBUG] reset talk file error.\n");
+				}
+			}
+			// end
+
 			/* Tell everyone who hold talk right. added by xiej	*/
 			json_t *event = json_object();
 			json_object_set_new(event, "pocroom", json_string("talked"));
@@ -2934,6 +3081,13 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
                 json_object_set_new(info, "id", json_integer(pocroom->talker));
                 gateway->notify_event(&janus_pocroom_plugin, session->handle, info);
             }
+
+			// add 2019/04/25
+			if (pocroom->record_user) {
+				LOGD("[DEBUG] user(%llu) release talk ...\n", user_id);
+				close_talk_file(pocroom);
+			}
+			// end
 
 			/* Tell everyone who freed talk right. added by xiej */
 			json_t *event = json_object();
@@ -3266,6 +3420,33 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 		}
 		/* Enqueue the decoded frame */
 		janus_mutex_lock(&participant->qmutex);
+
+		// add 存储用户音频数据 2019/04/26
+		if (participant->user_id == participant->room->talker && participant->room->record_user)
+		{
+			int samples = participant->room->sampling_rate/50;
+			opus_int32 buffer[OPUS_SAMPLES];
+			opus_int16 outBuffer[OPUS_SAMPLES];
+			opus_int16 * curBuffer = (opus_int16 *)pkt->data;
+
+			memset(buffer, 0, OPUS_SAMPLES*4);
+			memset(outBuffer, 0, OPUS_SAMPLES*2);
+
+			LOGD("[DEBUG] Storage rtp data for user(%llu) in room(%llu), samples: %d ...\n", participant->user_id, participant->room->room_id, samples);
+			int i = 0;
+			for(i=0; i<samples; i++) {
+				buffer[i] += curBuffer[i];
+			}
+
+			for(i=0; i<samples; i++) {
+				/* FIXME Smoothen/Normalize instead of truncating? */
+				outBuffer[i] = buffer[i];
+			}
+
+			write_talk_file(participant->room, outBuffer, sizeof(opus_int16) * samples);
+		}
+		// end
+
 		/* Insert packets sorting by sequence number */
 		participant->inbuf = g_list_insert_sorted(participant->inbuf, pkt, &janus_pocroom_rtp_sort);
 		if(participant->prebuffering) {
