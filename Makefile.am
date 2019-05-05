@@ -132,6 +132,8 @@ janus_SOURCES = \
 	transports/transport.h \
 	transports/transport.c \
 	events/eventhandler.h \
+	user_com.h \
+	user_com.c \
 	$(NULL)
 
 janus_CFLAGS = \
