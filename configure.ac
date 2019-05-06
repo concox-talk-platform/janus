@@ -338,6 +338,18 @@ AC_SEARCH_LIBS([tls_config_set_ca_mem],[tls],
              [AM_CONDITIONAL([LIBRESSL_DETECTED], false)]
              )
 
+AC_CHECK_LIB([fdfsclient],
+             [fdfs_check_data_filename],
+             [JANUS_MANUAL_LIBS+=" -lfdfsclient"],
+             [AC_MSG_ERROR([WARNING: libfdfsclient may not found.])]
+             )
+
+AC_CHECK_LIB([fastcommon],
+             [log_init],
+             [JANUS_MANUAL_LIBS+=" -lfastcommon"],
+             [AC_MSG_ERROR([WARNING: libfastcommon not found.])]
+             )
+
 AC_CHECK_LIB([nice],
              [nice_agent_set_port_range],
              [AC_DEFINE(HAVE_PORTRANGE)],

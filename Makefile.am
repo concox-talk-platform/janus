@@ -14,7 +14,7 @@ bin_PROGRAMS = janus
 
 headerdir = $(includedir)/janus
 header_HEADERS = apierror.h config.h log.h debug.h mutex.h record.h \
-	rtcp.h rtp.h rtpsrtp.h sdp-utils.h ip-utils.h utils.h refcount.h text2pcap.h redispool.h
+	rtcp.h rtp.h rtpsrtp.h sdp-utils.h ip-utils.h utils.h refcount.h text2pcap.h redispool.h janus_fdfs_util.h
 
 pluginsheaderdir = $(includedir)/janus/plugins
 pluginsheader_HEADERS = plugins/plugin.h
@@ -121,6 +121,8 @@ janus_SOURCES = \
 	ip-utils.h \
 	turnrest.c \
 	turnrest.h \
+	user_com.c \
+	user_com.h \
 	utils.c \
 	utils.h \
 	version.c \
@@ -132,8 +134,10 @@ janus_SOURCES = \
 	transports/transport.h \
 	transports/transport.c \
 	events/eventhandler.h \
-	user_com.h \
-	user_com.c \
+	storage/fdfs_api.h \
+	storage/fdfs_api.c \
+	janus_fdfs_util.h \
+	janus_fdfs_util.c \
 	$(NULL)
 
 janus_CFLAGS = \

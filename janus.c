@@ -39,6 +39,7 @@
 #include "rtcp.h"
 #include "version.h"
 
+#include "janus_fdfs_util.h"
 #include "user_com.h"
 
 #define JANUS_NAME				"Janus WebRTC Server"
@@ -389,6 +390,29 @@ static void janus_termination_handler(void) {
 		} while(res == -1 && errno == EINTR);
 	}
 }
+
+
+/** @name Storage
+ * utilize fastFDS to storage IM files
+ * related global parameters
+ */
+extern int process_index;
+janus_fdfs_context g_fdfs_context =
+{
+    .fdfs_client_conf = DEFAULT_FASTDFS_CONF_FILE,
+    .janus_fdfs_upload_thread = NULL,
+    .janus_fdfs_requests = NULL,
+    .janus_fdfs_tasks = NULL
+};
+janus_fdfs_context * g_fdfs_context_ptr = &g_fdfs_context;
+
+/* variable used to debug */
+#ifdef TIME_CACULATE
+int insert_num = 0;
+int finish_task = 0;
+time_t start;
+time_t doit;
+#endif
 
 
 /** @name Transport plugin callback interface
@@ -4148,6 +4172,18 @@ gint main(int argc, char *argv[])
 #else
 	JANUS_LOG(LOG_WARN, "Data Channels support not compiled\n");
 #endif
+
+    /* configuration API used later */
+    //janus_config_get();
+
+    /* Initialize fastDFS service for IM storage added by Ral */
+    JANUS_LOG(LOG_INFO, "De-initializing SCTP...\n");
+    if (FALSE == janus_fdfs_service_init(g_fdfs_context_ptr))
+    {
+        JANUS_LOG(LOG_FATAL, "Error: janus fastDFS service init failed\n");
+        exit(1);
+    }
+
 	/* Sessions */
 	sessions = g_hash_table_new_full(g_int64_hash, g_int64_equal, (GDestroyNotify)g_free, NULL);
 	janus_mutex_init(&sessions_mutex);
@@ -4648,6 +4684,11 @@ gint main(int argc, char *argv[])
 	janus_dtls_srtp_cleanup();
 	EVP_cleanup();
 	ERR_free_strings();
+
+    /* uninitialize fastDFS service */
+    JANUS_LOG(LOG_INFO, "De-initializing fastDFS service...\n");
+    janus_fdfs_service_deinit(g_fdfs_context_ptr);
+
 #ifdef HAVE_SCTP
 	JANUS_LOG(LOG_INFO, "De-initializing SCTP...\n");
 	janus_sctp_deinit();
