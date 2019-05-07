@@ -16,7 +16,7 @@
 #define DEFAULT_FASTDFS_CONF_FILE "/etc/fdfs/client.conf"
 #define DEFAULT_TMP_STORAGE_DIR "/tmp/fastDFS.cache"
 
-#define TIME_CACULATE
+//#define TIME_CACULATE
 
 /* 如果想使用demo程序,需要将此处的#if 1替换成0 */
 #if 1

@@ -1626,7 +1626,7 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 	}
 
 	/* Init redis poc rooms */
-	redisContext* c = getContext();
+	redisContext* c = janus_get_context();
 	/* Iterate on all redisReplys */
 	if(c != NULL) {
 		redisReply* reply = (redisReply *)redisCommand(c, "keys grp:*:mem");//TODO
@@ -1704,7 +1704,7 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 	else {
 		JANUS_LOG(LOG_WARN, "Can't get redispool instance.\n");
 	}
-	retConnect(c);
+	janus_set_context(c);
 	/* Done: we keep the configuration file open in case we get a "create" or "destroy" with permanent=true */
 	/* End redis reading */
 

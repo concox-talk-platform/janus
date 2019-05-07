@@ -104,6 +104,7 @@ janus_SOURCES = \
 	mutex.h \
 	record.c \
 	record.h \
+	redispool.c \
 	redispool.h \
 	refcount.h \
 	rtcp.c \

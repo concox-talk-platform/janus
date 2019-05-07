@@ -21,8 +21,9 @@ extern janus_fdfs_context * g_fdfs_context_ptr;
 extern janus_fdfs_info pthread_para;
 
 #ifdef TIME_CACULATE
-extern int insert_num;
-extern int finish_task;
+extern unsigned long int insert_num;
+extern unsigned long int finish_task;
+extern unsigned long int old_num;
 extern time_t start;
 extern time_t doit;
 #endif
@@ -179,11 +180,12 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
 #ifdef TIME_CACULATE
                 /* 测试运行时间 */
                 ++finish_task;
-                if (finish_task == insert_num)
+                if (finish_task == insert_num && old_num != insert_num)
                 {
+                    old_num = insert_num;
                     doit = time(NULL);
                     g_printf("\n#############################################################\n");
-                    g_printf("########## %d task finished, time cost: %ld seconds ##########\n", finish_task, doit - start);
+                    g_printf("########## %lu task finished, time cost: %ld seconds ##########\n", finish_task, doit - start);
                     g_printf("#############################################################\n\n");
                 }
 #endif
@@ -203,7 +205,10 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
             /* 等50ms */
             g_usleep(50000);
 #ifdef TIME_CACULATE
-            JN_DBG_LOG("already finish %d tasks\n", insert_num);
+            if (0 != insert_num && insert_num % 1000 == 0)
+            {
+                JN_DBG_LOG("already finish %d tasks\n", insert_num);
+            }
             timeout++;
 
             /* 自测用退出代码 */

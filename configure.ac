@@ -23,7 +23,6 @@ CFLAGS="$CFLAGS \
 	-fstack-protector-all \
 	-fstrict-aliasing \
 	-ggdb3 \
-	-lhiredis \
 	-pthread \
 	-Wall \
 	-Warray-bounds \
@@ -336,6 +335,12 @@ AM_CONDITIONAL([ENABLE_PTHREAD_MUTEX], [test "x$enable_pthread_mutex" = "xyes"])
 AC_SEARCH_LIBS([tls_config_set_ca_mem],[tls],
              [AM_CONDITIONAL([LIBRESSL_DETECTED], true)],
              [AM_CONDITIONAL([LIBRESSL_DETECTED], false)]
+             )
+
+AC_CHECK_LIB([hiredis],
+             [redisKeepAlive],
+             [JANUS_MANUAL_LIBS+=" -lhiredis"],
+             [AC_MSG_ERROR([WARNING: libhiredis may not found.])]
              )
 
 AC_CHECK_LIB([fdfsclient],

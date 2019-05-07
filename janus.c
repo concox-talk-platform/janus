@@ -393,6 +393,12 @@ static void janus_termination_handler(void) {
 
 
 /** @name Storage
+ * utilize redis to storage fastDFS url
+ * related global parameters
+ */
+GAsyncQueue *g_janus_redispool = NULL;
+
+/** @name Storage
  * utilize fastFDS to storage IM files
  * related global parameters
  */
@@ -408,8 +414,9 @@ janus_fdfs_context * g_fdfs_context_ptr = &g_fdfs_context;
 
 /* variable used to debug */
 #ifdef TIME_CACULATE
-int insert_num = 0;
-int finish_task = 0;
+unsigned long int insert_num = 0;
+unsigned long int finish_task = 0;
+unsigned long int old_num = (unsigned long)-1;
 time_t start;
 time_t doit;
 #endif
@@ -4173,13 +4180,17 @@ gint main(int argc, char *argv[])
 	JANUS_LOG(LOG_WARN, "Data Channels support not compiled\n");
 #endif
 
+	/* Load redis pool */
+	char redis_config[255];
+	g_snprintf(redis_config, 255, "%s/janus.transport.redis.jcfg", configs_folder);
+	janus_redispool_init(redis_config);
+
     /* configuration API used later */
     //janus_config_get();
 
     /* Initialize fastDFS service for IM storage added by Ral */
     JANUS_LOG(LOG_INFO, "De-initializing SCTP...\n");
-    if (FALSE == janus_fdfs_service_init(g_fdfs_context_ptr))
-    {
+    if (FALSE == janus_fdfs_service_init(g_fdfs_context_ptr)) {
         JANUS_LOG(LOG_FATAL, "Error: janus fastDFS service init failed\n");
         exit(1);
     }
@@ -4213,11 +4224,6 @@ gint main(int argc, char *argv[])
 	}
 	/* Wait 120 seconds before stopping idle threads to avoid the creation of too many threads for AddressSanitizer. */
 	g_thread_pool_set_max_idle_time(120 * 1000);
-
-	/* Load redis pool */
-	char redis_config[255];
-	g_snprintf(redis_config, 255, "%s/janus.transport.redis.jcfg", configs_folder);
-	redispool_init(redis_config);
 
 	/* Load event handlers */
 	const char *path = NULL;
@@ -4689,6 +4695,10 @@ gint main(int argc, char *argv[])
     JANUS_LOG(LOG_INFO, "De-initializing fastDFS service...\n");
     janus_fdfs_service_deinit(g_fdfs_context_ptr);
 
+    /* uninitialize redis service */
+	JANUS_LOG(LOG_INFO, "Closing redis pool.\n");
+	janus_redispool_destroy();
+
 #ifdef HAVE_SCTP
 	JANUS_LOG(LOG_INFO, "De-initializing SCTP...\n");
 	janus_sctp_deinit();
@@ -4704,9 +4714,6 @@ gint main(int argc, char *argv[])
 		g_hash_table_foreach(plugins_so, janus_pluginso_close, NULL);
 		g_hash_table_destroy(plugins_so);
 	}
-
-	JANUS_LOG(LOG_INFO, "Closing redis pool.\n");
-	redispool_destroy();
 
 	JANUS_LOG(LOG_INFO, "Closing event handlers:\n");
 	janus_events_deinit();
