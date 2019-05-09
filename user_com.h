@@ -18,7 +18,9 @@ typedef enum E_SESSION_ERR {
     E_UNKNOWN
 } E_SESSION_ERR;
 
-bool init_user_session();
+bool init_user_session(void);
+
+void user_session_info(void);
 
 bool is_user_exist(guint64 uid);
 
@@ -30,6 +32,6 @@ bool del_user_by_session(guint64 session_id);
 
 user_session * get_user_session(guint64 uid);
 
-void release_user_session();
+void release_user_session(void);
 
 #endif  // JANUS_USER_COM_H_

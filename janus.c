@@ -397,6 +397,7 @@ static void janus_termination_handler(void) {
  * related global parameters
  */
 GAsyncQueue *g_janus_redispool = NULL;
+char g_redis_fdfs_key[KEY_STRING_SIZE] = REDIS_LIST_FDFSURL_KEY;
 
 /** @name Storage
  * utilize fastFDS to storage IM files
@@ -532,7 +533,7 @@ static gboolean janus_check_sessions(gpointer user_data) {
 				JANUS_LOG(LOG_INFO, "Timeout expired for session %"SCNu64"...\n", session->session_id);
 
 				// add 2019/04/24
-				LOGD("\n[DEBUG] timeout expired del_user_by_session(%llu)...\n", session->session_id);
+				LOGD("\n[DEBUG] timeout expired del_user_by_session(%lu)...\n", session->session_id);
 				del_user_by_session(session->session_id);
 				// end
 				/* Mark the session as over, we'll deal with it later */
@@ -550,7 +551,7 @@ static gboolean janus_check_sessions(gpointer user_data) {
 
 				/* FIXME Is this safe? apparently it causes hash table errors on the console */
 				g_hash_table_iter_remove(&iter);
-				LOGD("=====> Check Session Timeout, Destroy session(%llu)\n", session->session_id);
+				LOGD("=====> Check Session Timeout, Destroy session(%lu)\n", session->session_id);
 				janus_session_destroy(session);
 			}
 		}
@@ -946,7 +947,7 @@ int janus_process_incoming_request(janus_request *request) {
 			if (E_OK != err) {
 				LOGD("add user session error: %d\n", err);
 			} else {
-				LOGD("add user(%llu) ---> session(%llu)\n", uid, session_id);
+				LOGD("add user(%lu) ---> session(%lu)\n", uid, session_id);
 			}
 		}
 		// end
@@ -1085,7 +1086,7 @@ int janus_process_incoming_request(janus_request *request) {
 		if (puid) {
 			guint64 uid = json_integer_value(puid);
 			del_user_session(uid);
-			LOGD("user(%llu) destroyed.\n", uid);
+			LOGD("user(%lu) destroyed.\n", uid);
 		}
 		// end
 
@@ -1561,7 +1562,7 @@ trickledone:
 		ret = janus_process_success(request, reply);
 	} else if (!strcasecmp(message_text, "user_call")) {
 		json_t * puid = json_object_get(root, "uid");
-		json_t * ptype = json_object_get(root, "type");
+		//json_t * ptype = json_object_get(root, "type");
 		if (!puid) {
 			ret = -1;
 			LOGD("no uid field in json object\n");
@@ -1575,9 +1576,9 @@ trickledone:
 		json_object_set_new(reply, "code", json_integer(ret));
 		json_object_set_new(reply, "msg", json_string(code2msg(ret)));
 		if (0 != ret) {
-			LOGD("send user(%llu) call error, code: %d\n", uid, ret);
+			LOGD("send user(%lu) call error, code: %d\n", uid, ret);
 		} else {
-			LOGD("send message to user(%llu) ok.\n", uid);
+			LOGD("send message to user(%lu) ok.\n", uid);
 		}
 
 		LOGD("---------Send Response--------\n");
@@ -1604,9 +1605,9 @@ trickledone:
 		int code = 0;
 		guint64 ssid = 0;
 		if (!sess) {
-			LOGD("no session for user(%llu)\n", uid);
+			LOGD("no session for user(%lu)\n", uid);
 			code = -1;
-			json_object_set_new(reply, "msg", "no session id found");
+			json_object_set_new(reply, "msg", json_string("no session id found"));
 		} else {
 			ssid = sess->session_id;
 		}
@@ -1635,26 +1636,26 @@ int send_user_call(guint64 uid, json_t * req) {
 
 	user_session * sess = get_user_session(uid);
 	if (NULL == sess) {
-		LOGD("can't find user(%llu) session on the server\n", uid);
+		LOGD("can't find user(%lu) session on the server\n", uid);
 		return 1;
 	}
 
 	janus_session * sp = janus_session_find(sess->session_id);
 	if (NULL == sp) {
-		LOGD("can't get session(%llu) for user(%llu)\n", sess->session_id, uid);
+		LOGD("can't get session(%lu) for user(%lu)\n", sess->session_id, uid);
 		return 2;
 	}
 
 	if (NULL == sp->source) {
-		LOGD("the source of session(%llu) is null", sess->session_id);
+		LOGD("the source of session(%lu) is null", sess->session_id);
 		return 3;
 	}
 
 	json_incref(req);
-	LOGD("=====[DEBUG] ready to send to  user(%llu)...\n", uid);
+	LOGD("=====[DEBUG] ready to send to  user(%lu)...\n", uid);
 	int ret = sp->source->transport->send_message(sp->source->instance, NULL, FALSE, req);
 	if (0 != ret) {
-		LOGD("send message to session(%llu) for user(%llu) error, code: %d\n", sess->session_id, uid, ret);
+		LOGD("send message to session(%lu) for user(%lu) error, code: %d\n", sess->session_id, uid, ret);
 		return 4;
 	}
 
@@ -2792,7 +2793,7 @@ void janus_transport_gone(janus_transport *plugin, janus_transport_session *tran
 				JANUS_LOG(LOG_VERB, "  -- Session %"SCNu64" will be over if not reclaimed\n", session->session_id);
 				JANUS_LOG(LOG_VERB, "  -- Marking Session %"SCNu64" as over\n", session->session_id);
 				if(reclaim_session_timeout < 1) { /* Reclaim session timeouts are disabled */
-					LOGD("=====> Transport gone, Destroy session(%llu).\n", session->session_id);
+					LOGD("=====> Transport gone, Destroy session(%lu).\n", session->session_id);
 					/* Mark the session as destroyed */
 					janus_session_destroy(session);
 					g_hash_table_iter_remove(&iter);
@@ -4180,18 +4181,23 @@ gint main(int argc, char *argv[])
 	JANUS_LOG(LOG_WARN, "Data Channels support not compiled\n");
 #endif
 
-	/* Load redis pool */
+	/* Initialize redis connection pool */
+    JANUS_LOG(LOG_INFO, "Initializing redis connection pool...\n");
 	char redis_config[255];
 	g_snprintf(redis_config, 255, "%s/janus.transport.redis.jcfg", configs_folder);
-	janus_redispool_init(redis_config);
+    JANUS_LOG(LOG_FATAL, "config_file: %s\n", redis_config);
+	if (FALSE == janus_redispool_init(redis_config)) {
+        JANUS_LOG(LOG_FATAL, "Error: janus redis connection init failed\n");
+        exit(1);
+    }
 
     /* configuration API used later */
     //janus_config_get();
 
     /* Initialize fastDFS service for IM storage added by Ral */
-    JANUS_LOG(LOG_INFO, "De-initializing SCTP...\n");
+    JANUS_LOG(LOG_INFO, "Initializing fastDFS related service...\n");
     if (FALSE == janus_fdfs_service_init(g_fdfs_context_ptr)) {
-        JANUS_LOG(LOG_FATAL, "Error: janus fastDFS service init failed\n");
+        JANUS_LOG(LOG_FATAL, "Error: janus fastDFS related service init failed\n");
         exit(1);
     }
 
@@ -4640,6 +4646,42 @@ gint main(int argc, char *argv[])
 
 	while(!g_atomic_int_get(&stop)) {
 		/* Loop until we have to stop */
+
+#if 0
+/* 做个小测试 */
+        /* added 2019/05/08 Ral */
+        /* prepare to store audio file in fdfs and send to redis */
+        JANUS_LOG(LOG_WARN, "#### LIUXIANG START TEST ####\n");
+        GError *dispatch_err = NULL;
+        time_t timestamp = time(NULL);
+        janus_fdfs_info *fdfs_entity = g_malloc(sizeof(janus_fdfs_info));
+        if (NULL != fdfs_entity) {
+            /* 这里产生的字符串和json对象将由相关处理线程销毁 */
+            fdfs_entity->file_path = g_strdup("/tmp/fastDFS.cache/liuxiang.txt");
+            fdfs_entity->json_object_ptr = json_object();
+            json_object_set_new(fdfs_entity->json_object_ptr, "uid", json_integer(123456789));
+            json_object_set_new(fdfs_entity->json_object_ptr, "type", json_string("ptt"));
+            json_object_set_new(fdfs_entity->json_object_ptr, "md5", json_string("to do"));
+            json_object_set_new(fdfs_entity->json_object_ptr, "grp_id", json_integer(987654321));
+            /* 由fdfs线程写入 */
+            //json_object_set_new(fdfs_entity->json_object_ptr, "file_path", json_string("to do"));
+            json_object_set_new(fdfs_entity->json_object_ptr, "timestamp", json_integer(timestamp));
+        
+            /* 异步追加请求消息 */
+            g_thread_pool_push(g_fdfs_context_ptr->janus_fdfs_tasks, fdfs_entity, &dispatch_err);
+            if (NULL != dispatch_err) {
+                JANUS_LOG(LOG_WARN, "failed to push fdfs request task in thread pool, error %d (%s)\n",
+                    dispatch_err->code, dispatch_err->message ? dispatch_err->message : "??");
+                /* 线程启动错误后应该怎么办?先记录日志,后续再处理 */
+            }
+            g_clear_error(&dispatch_err);
+        }
+        else
+        {
+            JANUS_LOG(LOG_WARN, "fdfs object malloc failed\n");
+        }
+        sleep(1);        
+#endif        
 		usleep(250000); /* A signal will cancel usleep() but not g_usleep() */
 	}
 
@@ -4696,7 +4738,7 @@ gint main(int argc, char *argv[])
     janus_fdfs_service_deinit(g_fdfs_context_ptr);
 
     /* uninitialize redis service */
-	JANUS_LOG(LOG_INFO, "Closing redis pool.\n");
+	JANUS_LOG(LOG_INFO, "De-initializing redis pool.\n");
 	janus_redispool_destroy();
 
 #ifdef HAVE_SCTP

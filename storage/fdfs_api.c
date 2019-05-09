@@ -10,6 +10,8 @@
 #include "fastdfs/fdfs_client.h"
 #include "fdfs_api.h"
 
+//#include "debug.h"
+
 static ConnectionInfo *pTrackerServer;
 static ConnectionInfo storage_servers[FDFS_MAX_SERVERS_EACH_GROUP];
 static int storage_server_count = 0;
@@ -111,7 +113,6 @@ int upload_file_by_buff(const char *file_buff, const int file_size, const char *
         return result;
     }
 
-
     if ((pStorageServer=getConnectedStorageServer(&storageServer, 
             &result)) == NULL)
     {
@@ -140,13 +141,14 @@ int upload_file_by_filename(const char *file_name, const char *file_ext_name, ch
         return result;
     }
 
-
     if ((pStorageServer=getConnectedStorageServer(&storageServer, 
             &result)) == NULL)
     {
         return result;
     }
 
+    //JANUS_LOG(LOG_FATAL, "#### RAPHAEL NEWEST DEBUG MSG: storage ipaddress: %s ,port: %d\n",
+    //    storageServer.ip_addr, storageServer.port);
     strcpy(storage_ip, storageServer.ip_addr);
     result = storage_upload_by_filename1(pTrackerServer, pStorageServer, 
         store_path_index, file_name, file_ext_name, NULL, 0, "", file_id);

@@ -4,30 +4,35 @@
 #define _JANUS_FDFS_UTIL_H
 
 #include <glib.h>
+#include <jansson.h>
 #include "storage/fdfs_api.h"
-#include "debug.h"
-
+
 #define FASTDFS_PROCESS_INDEX 0
-#define FILE_NAME_SIZE 128
+#define FILE_NAME_SIZE 256
 #define THREAD_SUM 20
 #define WAIT_TIME_OUT 10
 #define DEFAULT_SERVICE_PORT 82
+#define FDFS_QUEUE_EMPTY_TIMEOUT 100000    /* 100ms */
 
 #define DEFAULT_FASTDFS_CONF_FILE "/etc/fdfs/client.conf"
 #define DEFAULT_TMP_STORAGE_DIR "/tmp/fastDFS.cache"
 
 //#define TIME_CACULATE
 
-/* 如果想使用demo程序,需要将此处的#if 1替换成0 */
-#if 1
+/* 编译测试用例时请置0 */
+#define FDFS_DEMO_TEST_DISABLE 1
+#if FDFS_DEMO_TEST_DISABLE
+#include "debug.h"
 #define JN_DBG_LOG(fmt, ...) \
-        JANUS_LOG(LOG_FATAL, "\n#### Raphael Said: ####"fmt, ##__VA_ARGS__)
+        JANUS_LOG(LOG_INFO, "\n#### JANUS FASTDFS: ####"fmt, ##__VA_ARGS__)
 #else
 #if 1
 #define JN_DBG_LOG(fmt, ...) \
         g_printf(fmt, ##__VA_ARGS__)
-#endif
+#else
 #define JN_DBG_LOG(fmt, ...)
+#endif
+#define JANUS_LOG(fmt, ...)
 #endif
 
 #ifdef __cplusplus
@@ -42,9 +47,8 @@ typedef struct janus_fdfs_context {
 }janus_fdfs_context;
 
 typedef struct janus_fdfs_info {
-    char file_name[FILE_NAME_SIZE];
-    char file_ext_name[FILE_NAME_SIZE];
-    char fdfs_url[FILE_NAME_SIZE * 2];
+    char *file_path;
+    json_t *json_object_ptr;
 }janus_fdfs_info;
 
 gboolean janus_fdfs_service_init(janus_fdfs_context *context);

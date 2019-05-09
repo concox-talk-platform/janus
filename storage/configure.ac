@@ -14,19 +14,24 @@ AC_PROG_CC
 AC_CHECK_LIB([pthread], [pthread_create])
 AC_CHECK_LIB([fdfsclient], [fdfs_client_init])
 AC_CHECK_LIB([fastcommon], [log_init])
+AC_CHECK_LIB([hiredis], [redisKeepAlive])
+AC_CHECK_LIB([jansson], [json_dumps])
 AC_CHECK_LIB([glib-2.0], [g_printf])
 AC_PROG_RANLIB
 
 # Checks for header files.
-AC_CHECK_HEADERS([fcntl.h stdlib.h string.h unistd.h pthread.h glib.h fastdfs/fdfs_global.h])
+AC_CHECK_HEADERS([fcntl.h stdlib.h string.h unistd.h pthread.h glib.h fastdfs/fdfs_global.h jansson.h hiredis/hiredis.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_TYPE_INT64_T
 
 # Checks for library functions.
 AC_CHECK_FUNCS([memset])
+AC_CHECK_FUNCS([gettimeofday])
 AC_CHECK_FUNCS([pthread_create])
 AC_CHECK_FUNCS([fdfs_client_init])
 AC_CHECK_FUNCS([g_printf])
+AC_CHECK_FUNCS([redisKeepAlive])
+AC_CHECK_FUNCS([json_dumps])
 
 AC_OUTPUT([Makefile])

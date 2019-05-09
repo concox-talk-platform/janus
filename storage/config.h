@@ -10,14 +10,26 @@
 /* Define to 1 if you have the `fdfs_client_init' function. */
 /* #undef HAVE_FDFS_CLIENT_INIT */
 
+/* Define to 1 if you have the `gettimeofday' function. */
+#define HAVE_GETTIMEOFDAY 1
+
 /* Define to 1 if you have the <glib.h> header file. */
 /* #undef HAVE_GLIB_H */
 
 /* Define to 1 if you have the `g_printf' function. */
 #define HAVE_G_PRINTF 1
 
+/* Define to 1 if you have the <hiredis/hiredis.h> header file. */
+#define HAVE_HIREDIS_HIREDIS_H 1
+
 /* Define to 1 if you have the <inttypes.h> header file. */
 #define HAVE_INTTYPES_H 1
+
+/* Define to 1 if you have the <jansson.h> header file. */
+#define HAVE_JANSSON_H 1
+
+/* Define to 1 if you have the `json_dumps' function. */
+#define HAVE_JSON_DUMPS 1
 
 /* Define to 1 if you have the `fastcommon' library (-lfastcommon). */
 #define HAVE_LIBFASTCOMMON 1
@@ -27,6 +39,12 @@
 
 /* Define to 1 if you have the `glib-2.0' library (-lglib-2.0). */
 #define HAVE_LIBGLIB_2_0 1
+
+/* Define to 1 if you have the `hiredis' library (-lhiredis). */
+#define HAVE_LIBHIREDIS 1
+
+/* Define to 1 if you have the `jansson' library (-ljansson). */
+#define HAVE_LIBJANSSON 1
 
 /* Define to 1 if you have the `pthread' library (-lpthread). */
 #define HAVE_LIBPTHREAD 1
@@ -42,6 +60,9 @@
 
 /* Define to 1 if you have the <pthread.h> header file. */
 #define HAVE_PTHREAD_H 1
+
+/* Define to 1 if you have the `redisKeepAlive' function. */
+#define HAVE_REDISKEEPALIVE 1
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #define HAVE_STDINT_H 1

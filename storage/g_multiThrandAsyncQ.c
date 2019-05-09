@@ -10,9 +10,18 @@
 #include "fastcommon/common_define.h"
 #include "fastcommon/logger.h"
 #include "fdfs_api.h"
-#include "../janus_fdfs_util.h"
 
+#include "../janus_fdfs_util.h"
+#include "../redispool.h"
+
+#include <sys/time.h>
 #include <time.h>
+
+#define FDFS_CACHE_PATH "/tmp/fastDFS.cache"
+
+
+GAsyncQueue *g_janus_redispool = NULL;
+char g_redis_fdfs_key[KEY_STRING_SIZE] = REDIS_LIST_FDFSURL_KEY;
 
 extern int process_index;
 janus_fdfs_context g_fdfs_context =
@@ -33,19 +42,116 @@ time_t doit;
 
 janus_fdfs_info pthread_para[] =
 {
-    { "test1", "txt" },
-    { "test2", "txt" },
-    { "test3", "txt" },
-    { "test4", "txt" },
-    { "test5", "txt" },
-    { "test6", "txt" },
-    { "test7", "txt" },
-    { "test8", "txt" },
-    { "test9", "txt" },
-    { "test10", "txt" }
+    { NULL, NULL },
+    { NULL, NULL },
+    { NULL, NULL },
+    { NULL, NULL },
+    { NULL, NULL },
+    { NULL, NULL },
+    { NULL, NULL },
+    { NULL, NULL },
+    { NULL, NULL },
+    { NULL, NULL }
 };
 
 #define OBJ_NUM (sizeof(pthread_para)/sizeof(janus_fdfs_info))
+
+static void test_object_create(void);
+static void test_object_destroy(void);
+static void fdfs_object_dump(janus_fdfs_info *src);
+static void test_dump(void);
+static janus_fdfs_info *test_janus_fdfs_info_copy(janus_fdfs_info *dst, janus_fdfs_info *src);
+
+
+static void test_object_create(void)
+{
+    int i = 0;
+    struct timeval tv;
+    char filepath[FILE_NAME_SIZE];
+    json_t *tmp = NULL;
+
+    for (i = 0; i < OBJ_NUM; i++)
+    {
+        gettimeofday(&tv, NULL);
+        g_snprintf(filepath, sizeof(filepath), "%s/test%d.txt", FDFS_CACHE_PATH, i + 1);
+        pthread_para[i].file_path = g_strdup(filepath);
+        pthread_para[i].json_object_ptr = json_object();
+        json_object_set_new(pthread_para[i].json_object_ptr, "uid", json_integer(i + 1));
+        json_object_set_new(pthread_para[i].json_object_ptr, "type", json_string("ptt"));
+        json_object_set_new(pthread_para[i].json_object_ptr, "md5", json_string("to do"));
+        json_object_set_new(pthread_para[i].json_object_ptr, "grp_id", json_integer(987654321));
+        /* 由fdfs线程写入 */
+        //json_object_set_new(fdfs_entity->json_object_ptr, "file_path", json_string(filepath));
+        json_object_set_new(pthread_para[i].json_object_ptr, "timestamp", json_integer(tv.tv_usec));
+    }
+}
+
+static void test_object_destroy(void)
+{
+    int i = 0;
+
+    for (i = 0; i < OBJ_NUM; i++)
+    {
+        g_free(pthread_para[i].file_path);
+        json_decref(pthread_para[i].json_object_ptr);
+    }
+}
+
+static void fdfs_object_dump(janus_fdfs_info *src)
+{
+    char *tmp;
+
+    if (NULL == src)
+    {
+        g_printf("invalid input pointer\n");
+    }
+
+    if (src->file_path)
+    {
+        g_printf("file path: %s\n", src->file_path);
+    }
+    else
+    {
+        g_printf("file path NULL\n");
+    }
+    if (src->json_object_ptr)
+    {
+        tmp = json_dumps(src->json_object_ptr, 0);
+        g_printf("json object: %s\n", tmp);
+        g_free(tmp);
+    }
+    else
+    {
+        g_printf("json object NULL\n");
+    }
+
+    return;
+}
+
+static void test_dump(void)
+{
+    int i = 0;
+
+    for (i = 0; i < OBJ_NUM; i++)
+    {
+        fdfs_object_dump(&pthread_para[i]);
+    }
+}
+
+
+static janus_fdfs_info *test_janus_fdfs_info_copy(janus_fdfs_info *dst, janus_fdfs_info *src)
+{
+    dst->file_path = g_strdup(src->file_path);
+    dst->json_object_ptr = json_deep_copy(src->json_object_ptr);
+
+    if (NULL == dst->file_path || NULL == dst->json_object_ptr)
+    {
+        fdfs_object_dump(dst);        
+        return NULL;
+    }
+    else
+        return dst;
+}
 
 int main(int argc, char **argv)
 {
@@ -75,6 +181,8 @@ int main(int argc, char **argv)
     {}
 
     thread_num = thread_num ? thread_num : THREAD_SUM;
+    test_object_create();
+    test_dump();
 
 #ifdef THREAD_TEST
     gtid = (GThread **)g_malloc0(thread_num * sizeof(GThread *));
@@ -85,12 +193,16 @@ int main(int argc, char **argv)
     }
 #endif
 
+    if (FALSE == janus_redispool_init()) {
+        JN_DBG_LOG("Error: janus redis connection init failed\n");
+        exit(1);
+    }
+    JN_DBG_LOG("redispool service initial successfully.\n");
     if (FALSE == janus_fdfs_service_init(g_fdfs_context_ptr))
     {
         JN_DBG_LOG("Error: janus fastDFS service init failed\n");
         exit(EXIT_FAILURE);
     }
-
     JN_DBG_LOG("fdfs service initial successfully.\n");
 #ifdef TIME_CACULATE
     start = time(NULL);
@@ -123,7 +235,10 @@ int main(int argc, char **argv)
             JN_DBG_LOG("Error: failed to allocate memory to store file information\n");
             continue;
         }
-        memcpy(entity, &pthread_para[j], sizeof(janus_fdfs_info));
+        if (NULL == test_janus_fdfs_info_copy(entity, &pthread_para[j])) {
+            JN_DBG_LOG("Error: failed to copy a new object\n");
+            continue;
+        }
         JN_DBG_LOG("%d threads alive in pool\n", g_thread_pool_get_num_threads(g_fdfs_context_ptr->janus_fdfs_tasks));
 
         /* 异步追加请求消息 */
@@ -153,6 +268,8 @@ int main(int argc, char **argv)
     g_printf("%d threads alive in pool\n", g_thread_pool_get_num_threads(g_fdfs_context_ptr->janus_fdfs_tasks));
     getchar();
     janus_fdfs_service_deinit(g_fdfs_context_ptr);
+    janus_redispool_destroy();
+    test_object_destroy();
 
     return result;
 
@@ -166,6 +283,8 @@ ERROR:
 #endif
 
     janus_fdfs_service_deinit(g_fdfs_context_ptr);
+	janus_redispool_destroy();
+    test_object_destroy();
 
     return result;
 }

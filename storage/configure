@@ -3906,6 +3906,96 @@ _ACEOF
 
 fi
 
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for redisKeepAlive in -lhiredis" >&5
+$as_echo_n "checking for redisKeepAlive in -lhiredis... " >&6; }
+if ${ac_cv_lib_hiredis_redisKeepAlive+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lhiredis  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char redisKeepAlive ();
+int
+main ()
+{
+return redisKeepAlive ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_hiredis_redisKeepAlive=yes
+else
+  ac_cv_lib_hiredis_redisKeepAlive=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_hiredis_redisKeepAlive" >&5
+$as_echo "$ac_cv_lib_hiredis_redisKeepAlive" >&6; }
+if test "x$ac_cv_lib_hiredis_redisKeepAlive" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_LIBHIREDIS 1
+_ACEOF
+
+  LIBS="-lhiredis $LIBS"
+
+fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for json_dumps in -ljansson" >&5
+$as_echo_n "checking for json_dumps in -ljansson... " >&6; }
+if ${ac_cv_lib_jansson_json_dumps+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-ljansson  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char json_dumps ();
+int
+main ()
+{
+return json_dumps ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_jansson_json_dumps=yes
+else
+  ac_cv_lib_jansson_json_dumps=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_jansson_json_dumps" >&5
+$as_echo "$ac_cv_lib_jansson_json_dumps" >&6; }
+if test "x$ac_cv_lib_jansson_json_dumps" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_LIBJANSSON 1
+_ACEOF
+
+  LIBS="-ljansson $LIBS"
+
+fi
+
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for g_printf in -lglib-2.0" >&5
 $as_echo_n "checking for g_printf in -lglib-2.0... " >&6; }
 if ${ac_cv_lib_glib_2_0_g_printf+:} false; then :
@@ -4442,7 +4532,7 @@ fi
 done
 
 
-for ac_header in fcntl.h stdlib.h string.h unistd.h pthread.h glib.h fastdfs/fdfs_global.h
+for ac_header in fcntl.h stdlib.h string.h unistd.h pthread.h glib.h fastdfs/fdfs_global.h jansson.h hiredis/hiredis.h
 do :
   as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
 ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
@@ -4481,6 +4571,17 @@ _ACEOF
 fi
 done
 
+for ac_func in gettimeofday
+do :
+  ac_fn_c_check_func "$LINENO" "gettimeofday" "ac_cv_func_gettimeofday"
+if test "x$ac_cv_func_gettimeofday" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_GETTIMEOFDAY 1
+_ACEOF
+
+fi
+done
+
 for ac_func in pthread_create
 do :
   ac_fn_c_check_func "$LINENO" "pthread_create" "ac_cv_func_pthread_create"
@@ -4509,6 +4610,28 @@ do :
 if test "x$ac_cv_func_g_printf" = xyes; then :
   cat >>confdefs.h <<_ACEOF
 #define HAVE_G_PRINTF 1
+_ACEOF
+
+fi
+done
+
+for ac_func in redisKeepAlive
+do :
+  ac_fn_c_check_func "$LINENO" "redisKeepAlive" "ac_cv_func_redisKeepAlive"
+if test "x$ac_cv_func_redisKeepAlive" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_REDISKEEPALIVE 1
+_ACEOF
+
+fi
+done
+
+for ac_func in json_dumps
+do :
+  ac_fn_c_check_func "$LINENO" "json_dumps" "ac_cv_func_json_dumps"
+if test "x$ac_cv_func_json_dumps" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_JSON_DUMPS 1
 _ACEOF
 
 fi

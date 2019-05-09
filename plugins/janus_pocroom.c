@@ -623,12 +623,14 @@ room-<unique room ID>: {
 #include <jansson.h>
 #include <opus/opus.h>
 #include <sys/time.h>
+#include <time.h>
 #include <stdbool.h>
 
 
 #include "../apierror.h"
 #include "../config.h"
 #include "../debug.h"
+#include "../janus_fdfs_util.h"
 #include "../mutex.h"
 #include "../record.h"
 #include "../redispool.h"
@@ -649,6 +651,9 @@ room-<unique room ID>: {
 
 #define MIN_SEQUENTIAL 						2
 #define MAX_MISORDER						50
+
+/* fdfs context pointer, initialized in janus.c */
+extern janus_fdfs_context * g_fdfs_context_ptr;
 
 /* Plugin methods */
 janus_plugin *create(void);
@@ -943,6 +948,12 @@ typedef struct wav_header {
 	uint32_t blocksize;
 } wav_header;
 
+void clean_talk_file(janus_pocroom_room * room);
+void set_talk_file_name(char * src, guint64 room_id, guint64 user_id);
+void set_talk_file_record(janus_pocroom_room * room, bool record);
+void close_talk_file(janus_pocroom_room * room);
+bool reset_talk_file(janus_pocroom_room * room);
+bool write_talk_file(janus_pocroom_room * room, const char * buf, int len);
 
 // add record user audio stream data 2019/04/26
 void clean_talk_file(janus_pocroom_room * room) {
@@ -955,7 +966,7 @@ void clean_talk_file(janus_pocroom_room * room) {
 void set_talk_file_name(char * src, guint64 room_id, guint64 user_id) {
 	if (!src) return;
 	time_t tm = time(NULL);
-	sprintf(src, "room_%llu_user_%llu_%ld.wav", room_id, user_id, tm);
+	sprintf(src, "%s/room_%lu_user_%lu_%ld.wav", DEF_JANUS_AUDIO_CACHE_DIR, room_id, user_id, tm);
 	LOGD("[DEBUG] set talk file to %s\n", src);
 }
 
@@ -1039,7 +1050,7 @@ bool write_talk_file(janus_pocroom_room * room, const char * buf, int len) {
 	}
 
 	if (!room->fp) {
-		LOGD("[ERROR] room(%llu) fp is null\n", room->room_id);
+		LOGD("[ERROR] room(%lu) fp is null\n", room->room_id);
 		return false;
 	}
 
@@ -1649,12 +1660,12 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 					strncpy(idStr, group->str + pos_f, len);
 					guint64 room_id = atoi(idStr);
 		
-					if (room_id < 0 || room_id == 0) {
-						JANUS_LOG(LOG_WARN, "fatal room_id %d\n", room_id);
+					if (room_id == 0) {
+						JANUS_LOG(LOG_WARN, "fatal room_id %lu\n", room_id);
 						++pos;
 						continue;
 					}
-					JANUS_LOG(LOG_VERB, "room id %d.\n", room_id);
+					JANUS_LOG(LOG_VERB, "room id %lu.\n", room_id);
 					
 					janus_pocroom_room *pocroom = g_malloc0(sizeof(janus_pocroom_room));
 					pocroom->room_id = room_id;
@@ -2995,7 +3006,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 
 			// add 设置打开talk录音文件 2019/04/26
 			if (pocroom->record_user) {
-				LOGD("[DEBUG] user(%llu) get talk...\n", pocroom->talker);
+				LOGD("[DEBUG] user(%lu) get talk...\n", pocroom->talker);
 				if (!reset_talk_file(pocroom)) {
 					LOGD("[DEBUG] reset talk file error.\n");
 				}
@@ -3084,8 +3095,37 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 
 			// add 2019/04/25
 			if (pocroom->record_user) {
-				LOGD("[DEBUG] user(%llu) release talk ...\n", user_id);
+				LOGD("[DEBUG] user(%lu) release talk ...\n", user_id);
 				close_talk_file(pocroom);
+
+                /* added 2019/05/08 Ral */
+                /* prepare to store audio file in fdfs and send to redis */
+                GError *dispatch_err = NULL;
+                time_t timestamp = time(NULL);
+                janus_fdfs_info *fdfs_entity = g_malloc(sizeof(janus_fdfs_info));
+                if (NULL != fdfs_entity) {
+                    /* 这里产生的字符串和json对象将由相关处理线程销毁 */
+                    fdfs_entity->file_path = g_strdup(pocroom->fname);
+                    fdfs_entity->json_object_ptr = json_object();
+                    json_object_set_new(fdfs_entity->json_object_ptr, "uid", json_integer(user_id));
+                    json_object_set_new(fdfs_entity->json_object_ptr, "type", json_string("ptt"));
+                    json_object_set_new(fdfs_entity->json_object_ptr, "md5", json_string("to do"));
+                    json_object_set_new(fdfs_entity->json_object_ptr, "grp_id", json_integer(pocroom->room_id));
+                    /* 由fdfs线程写入 */
+                    //json_object_set_new(fdfs_entity->json_object_ptr, "file_path", json_string("to do"));
+                    json_object_set_new(fdfs_entity->json_object_ptr, "timestamp", json_integer(timestamp));
+                    
+                    /* 异步追加请求消息 */
+                    g_thread_pool_push(g_fdfs_context_ptr->janus_fdfs_tasks, fdfs_entity, &dispatch_err);
+                    if (NULL != dispatch_err) {
+                        JANUS_LOG(LOG_WARN, "failed to push fdfs request task in thread pool, error %d (%s)\n",
+                            dispatch_err->code, dispatch_err->message ? dispatch_err->message : "??");
+                        /* 线程启动错误后应该怎么办?先记录日志,后续再处理 */
+                    }
+                    g_clear_error(&dispatch_err);
+                }else {
+                    LOGD("[DEBUG] fdfs object malloc failed\n");
+                }
 			}
 			// end
 
@@ -3432,7 +3472,7 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 			memset(buffer, 0, OPUS_SAMPLES*4);
 			memset(outBuffer, 0, OPUS_SAMPLES*2);
 
-			LOGD("[DEBUG] Storage rtp data for user(%llu) in room(%llu), samples: %d ...\n", participant->user_id, participant->room->room_id, samples);
+			LOGD("[DEBUG] Storage rtp data for user(%lu) in room(%lu), samples: %d ...\n", participant->user_id, participant->room->room_id, samples);
 			int i = 0;
 			for(i=0; i<samples; i++) {
 				buffer[i] += curBuffer[i];
@@ -3443,7 +3483,7 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 				outBuffer[i] = buffer[i];
 			}
 
-			write_talk_file(participant->room, outBuffer, sizeof(opus_int16) * samples);
+			write_talk_file(participant->room, (char *)outBuffer, sizeof(opus_int16) * samples);
 		}
 		// end
 

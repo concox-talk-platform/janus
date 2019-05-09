@@ -10,7 +10,7 @@
 
 GHashTable * g_user_map = NULL;
 
-bool init_user_session() {
+bool init_user_session(void) {
     if (g_user_map) return true;
 
     g_user_map = g_hash_table_new_full(g_int64_hash, g_int64_equal, (GDestroyNotify)g_free, (GDestroyNotify)g_free);
@@ -50,7 +50,7 @@ bool del_user_session(guint64 uid) {
 bool del_user_by_session(guint64 session_id) {
     GHashTableIter iter;
     gpointer key, value;
-    guint64 * pkey = NULL;
+    //guint64 * pkey = NULL;
     user_session * pvalue = NULL;
     bool  ret = false;
 	g_hash_table_iter_init(&iter, g_user_map);
@@ -72,14 +72,14 @@ user_session * get_user_session(guint64 uid) {
     return g_hash_table_lookup(g_user_map, &uid);
 }
 
-void release_user_session() {
+void release_user_session(void) {
     if (!g_user_map) return;
 
     g_hash_table_remove_all(g_user_map);
     g_user_map = NULL;
 }
 
-void user_session_info() {
+void user_session_info(void) {
     GHashTableIter iter;
     gpointer key, value;
     guint64 * pkey = NULL;
@@ -93,7 +93,7 @@ void user_session_info() {
         pvalue = (user_session *)value;
     
         if (pvalue) {
-            printf("%10llu\t%15llu\n", *pkey, pvalue->session_id);
+            printf("%10lu\t%15lu\n", *pkey, pvalue->session_id);
         }
     }
     printf("------------------End---------------\n");

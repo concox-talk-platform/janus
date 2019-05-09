@@ -1,6 +1,7 @@
 #include <glib.h>
 #include <glib/gprintf.h>
 #include <glib/gi18n.h>
+#include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,17 +9,27 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/syscall.h>
+
+#include <glib/gstdio.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+
 #include "fastcommon/common_define.h"
 #include "fastcommon/logger.h"
+#include "redispool.h"
 #include "janus_fdfs_util.h"
 
+#if FDFS_DEMO_TEST_DISABLE
+#include "config.h"
+#else
+#define DEF_JANUS_AUDIO_CACHE_DIR "/tmp/janusCache/audio"
+#define DEF_JANUS_VIDEO_CACHE_DIR "/tmp/janusCache/video"
+#endif
 /* 用于测试程序运行时间 */
 #include <time.h>
 
 int process_index = FASTDFS_PROCESS_INDEX;
 extern janus_fdfs_context * g_fdfs_context_ptr;
-
-extern janus_fdfs_info pthread_para;
 
 #ifdef TIME_CACULATE
 extern unsigned long int insert_num;
@@ -29,8 +40,15 @@ extern time_t doit;
 #endif
 
 #ifdef THREAD_TEST
+extern janus_fdfs_info pthread_para;
 static gpointer janus_fdfs_dispatch_thread_test(gpointer data);
 #endif
+
+static char *janus_fdfs_extname_get(char *filename, char delim);
+
+static void janus_fdfs_item_free(gpointer data);
+
+static gboolean janus_fdfs_cache_directory_init(void);
 
 static gpointer janus_fdfs_upload_handler(gpointer data);
 
@@ -38,9 +56,11 @@ static void janus_fdfs_upload_request(gpointer data, gpointer userentity);
 
 static void janus_fdfs_item_free(gpointer data)
 {
-    if (NULL != data)
+    janus_fdfs_info *work = (janus_fdfs_info *)data;
+    if (NULL != work)
     {
-        g_free(data);
+        g_free(work->file_path);
+        json_decref(work->json_object_ptr);
     }
 }
 
@@ -48,6 +68,64 @@ static gboolean is_file_exist(const char *file_path)
 {
     //JN_DBG_LOG("absolute file path: %s\n", file_path);
     return 0 == access(file_path, F_OK);
+}
+
+/* 
+ * ATTENTION:如果路径中存在分隔符delim如'.'，那么有可能分割出错误的字符串
+ * e.g. 一个无后缀的文件路径为/a/b/c.d/filename最后就会分割成
+ * 文件名:/a/b/c,文件类型名:d/filename,显然是错误的,文件名有类型后缀则不会出问题
+ * e.g. /a/b/c.d/filename.mp3就会分割成/a/b/c.d/filename和mp3
+ * 当然,路径中没有分隔符则不会出现此类问题
+ * 使用basename进行解决,如果这么做,请注意filename指向的字符串会被修改
+ */
+static char *janus_fdfs_extname_get(char *filename, char delim)
+{
+    char *delim_ptr = NULL;
+    char *base_name = NULL;
+
+    if (NULL == filename || '\0' == delim)
+        return NULL;
+
+    if (NULL == (base_name = basename(filename)))
+    { /* 非法绝对文件路径 */
+        return NULL;
+    }
+    if (NULL == (delim_ptr = strrchr(base_name, delim)))
+    { /* 没找到后缀 */
+        return NULL;
+    }
+    else
+    {
+        ++delim_ptr;
+    }
+
+    return delim_ptr;
+}
+
+/* FIXME:后续需要优化成janus的配置 */
+static gboolean janus_fdfs_cache_directory_init(void)
+{
+    int saved_errno;
+
+    /* 创建临时音频存储目录 */
+    if (-1 == g_mkdir_with_parents(DEF_JANUS_AUDIO_CACHE_DIR, 0755))
+    {
+        saved_errno = errno;
+        JN_DBG_LOG("Error: %s, Failed to create janus audio directory\n",
+            g_strerror(saved_errno));
+        return FALSE;
+    }
+
+    /* 创建临时视频存储目录 */
+    if (-1 == g_mkdir_with_parents(DEF_JANUS_VIDEO_CACHE_DIR, 0755))
+    {
+        saved_errno = errno;
+        JN_DBG_LOG("Error: %s, Failed to create janus audio directory\n",
+            g_strerror(saved_errno));
+        return FALSE;
+    }
+
+    return TRUE;
 }
 
 gboolean janus_fdfs_service_init(janus_fdfs_context *context)
@@ -61,6 +139,12 @@ gboolean janus_fdfs_service_init(janus_fdfs_context *context)
     gboolean dfs_main_thread_destroy = FALSE;
     gboolean dfs_thread_pool_destroy = FALSE;
 
+    if (FALSE == janus_fdfs_cache_directory_init())
+    {
+        JN_DBG_LOG("Failed to create cache directory\n");
+        return FALSE;
+    }
+
     g_assert(NULL != context);
     /* log_init用于fastDFS的日志记录，不可缺少，否则会段错误 */
     log_init();
@@ -72,13 +156,9 @@ gboolean janus_fdfs_service_init(janus_fdfs_context *context)
     }
     dfs_conn_destroy = TRUE;
 
-    JN_DBG_LOG("dfds connection init\n");
-
     /* 创建fdfs上传请求消息队列 */
     context->janus_fdfs_requests = g_async_queue_new_full(janus_fdfs_item_free);
     dfs_req_queue_destroy = TRUE;
-
-    JN_DBG_LOG("requests queue init\n");
     
     /* 创建fastDFS上传线程 */
     g_snprintf(fdfs_upload_thr_name, FILE_NAME_SIZE, "fdfs_upload_main_thread");
@@ -88,11 +168,10 @@ gboolean janus_fdfs_service_init(janus_fdfs_context *context)
     {
         JN_DBG_LOG("fdfs upload thread start failed, error %d (%s)\n",
                     error->code, error->message ? error->message : "??");
-        goto fdfs_janus_failure;
+        goto janus_fdfs_failure;
     }
+    g_clear_error(&error);
     dfs_main_thread_destroy = TRUE;
-
-    JN_DBG_LOG("uploader thread init\n");
 
     /* 创建线程池并设置线程超时时间 */
     error = NULL;
@@ -100,18 +179,18 @@ gboolean janus_fdfs_service_init(janus_fdfs_context *context)
     if (NULL != error)
     {
         JN_DBG_LOG("dispath thread pool start failed\n");
-        goto fdfs_janus_failure;
+        goto janus_fdfs_failure;
     }
+    g_clear_error(&error);
     /* 2min */
     g_thread_pool_set_max_idle_time(120 * 1000);
     dfs_thread_pool_destroy = TRUE;
 
-    JN_DBG_LOG("request handler pool init\n");
-
     return TRUE;
 
 /* 错误清理 */
-fdfs_janus_failure:
+janus_fdfs_failure:
+    g_clear_error(&error);
     if (dfs_thread_pool_destroy)
         g_thread_pool_free(context->janus_fdfs_tasks, FALSE, FALSE);
     if (dfs_main_thread_destroy)
@@ -140,10 +219,20 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
 {
     janus_fdfs_info *entity;
     char storage_ip[IP_ADDRESS_SIZE];
-    char file_path[FILE_NAME_SIZE * 2];
+
+    /* 
+     * 用于获取文件名及文件类型名：
+     * aaa.txt被分割成aaa和txt存在这个指针指向的数组中
+     * 使用完要记得释放
+     */
+    char *ext_name = NULL;
+    char file_url_name[FILE_NAME_SIZE];
     //int store_bytes = 0;
+    gboolean redis_flag = FALSE;
     int result;
+#ifdef TIME_CACULATE
     int timeout = 0;
+#endif
     GAsyncQueue *fdfs_request_async_queue = NULL;
 
     g_assert(NULL != g_fdfs_context_ptr);
@@ -153,30 +242,58 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
         memset(storage_ip, 0, sizeof(storage_ip));
         *storage_ip = '\0';
 
-        entity = (janus_fdfs_info *)g_async_queue_try_pop(fdfs_request_async_queue);
+        entity = (janus_fdfs_info *)g_async_queue_timeout_pop(fdfs_request_async_queue, FDFS_QUEUE_EMPTY_TIMEOUT);
         if (NULL != entity) {
             /* 测试用,上传缓冲区文本 */
             //store_bytes = strlen(entity->file_name);
             //result = upload_file_by_buff(entity->file_name, store_bytes, entity->file_ext_name, entity->fdfs_url, storage_ip);
             
             /* 上传指定文件,且文件需要指定类型扩展名 */
-            g_snprintf(file_path, FILE_NAME_SIZE * 2, "%s/%s.%s", DEFAULT_TMP_STORAGE_DIR, entity->file_name, entity->file_ext_name);
-            if (!is_file_exist(file_path))
+            if (!is_file_exist(entity->file_path))
             {
-                JN_DBG_LOG("Error: file \"%s\" not exist\n", file_path);
+                //JANUS_LOG(LOG_WARN, "Error: file \"%s\" not exist\n", entity->file_path);
+                JN_DBG_LOG("Error: file \"%s\" not exist\n", entity->file_path);
                 janus_fdfs_item_free(entity);
                 continue;
             }
-            result = upload_file_by_filename(file_path, entity->file_ext_name, entity->fdfs_url, storage_ip);
+            /* 注意,如果这个函数会修改file_path,那么最好传一份拷贝进去 */
+            ext_name = janus_fdfs_extname_get(entity->file_path, '.');
+            if (NULL == ext_name)
+            {
+                //JANUS_LOG(LOG_WARN, "Error: filename \"%s\" invalid\n", entity->file_path);
+                JN_DBG_LOG("Error: filename \"%s\" invalid\n", entity->file_path);
+                janus_fdfs_item_free(entity);
+                continue;
+            }
+            result = upload_file_by_filename(entity->file_path, ext_name, file_url_name, storage_ip);
             if (result == 0) //success
             {
                 /* 是否拼接成完整的url，这里默认没有 */
-                JN_DBG_LOG("filename url: %s:%d/%s\n", storage_ip, DEFAULT_SERVICE_PORT, entity->fdfs_url);
-                /* 后续是否使用异步队列递送给redis处理? */
-                entity = NULL;
+                JN_DBG_LOG("filename url: %s:%d/%s\n", storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
+                //JANUS_LOG(LOG_FATAL, "filename url: %s:%d/%s\n", storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
+                /* 准备使用redis连接池写入fastDFS的文件存储信息 */
+                /* 增加url信息 */
+                json_object_set_new(entity->json_object_ptr, "file_path", json_string(file_url_name));
+                /* redis工作完毕 */
+                char *temp_string = json_dumps(entity->json_object_ptr, JSON_PRESERVE_ORDER);
+                if (NULL != temp_string) {
+                    //JANUS_LOG(LOG_DBG, "json value: %s\n", temp_string);
+                    JN_DBG_LOG("json value: %s\n", temp_string);
+                    redis_flag = janus_push_im_fdfs_url(temp_string);
+                    g_free(temp_string);
+                }
+                /* 释放对应的空间 */
                 janus_fdfs_item_free(entity);
+                if (FALSE == redis_flag)
+                {
+                    //JANUS_LOG(LOG_WARN, "failed to write fdfs info into redis\n");
+                    JN_DBG_LOG("failed to write fdfs info into redis\n");
+                    continue;
+                }
                 /* 删除原始数据文件 */
                 //g_unlink(file_path);
+
+
 #ifdef TIME_CACULATE
                 /* 测试运行时间 */
                 ++finish_task;
@@ -193,18 +310,24 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
             else //fail
             {
                 g_async_queue_lock(fdfs_request_async_queue);
+                //JN_DBG_LOG("thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
+                //JANUS_LOG(LOG_WARN, "thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
                 JN_DBG_LOG("thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
                 g_async_queue_push_unlocked(fdfs_request_async_queue, entity);
                 g_async_queue_unlock(fdfs_request_async_queue);
+                /* for test */
+                g_usleep(500000);
             }
+
+
+#ifdef TIME_CACULATE
             timeout = 0;
+#endif
         }
+#ifdef TIME_CACULATE
         else
         {
             //JN_DBG_LOG("failed to get entity, wait\n");
-            /* 等50ms */
-            g_usleep(50000);
-#ifdef TIME_CACULATE
             if (0 != insert_num && insert_num % 1000 == 0)
             {
                 JN_DBG_LOG("already finish %d tasks\n", insert_num);
@@ -217,8 +340,8 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
                 JN_DBG_LOG("no task now, try to exit\n");
                 g_thread_unref(g_thread_self());
             }
-#endif
         }
+#endif
     }
 
     return NULL;
@@ -232,9 +355,10 @@ static void janus_fdfs_upload_request(gpointer data, gpointer userdata)
     g_assert(NULL != g_fdfs_context_ptr);
     fdfs_request_async_queue = g_fdfs_context_ptr->janus_fdfs_requests;
 
-    //JN_DBG_LOG("get data: %s %s\n", entity->file_name, entity->file_ext_name);
     g_async_queue_lock(fdfs_request_async_queue);
     g_async_queue_push_unlocked(fdfs_request_async_queue, entity);
+
+
 #ifdef TIME_CACULATE
     ++process_index;
     ++insert_num;

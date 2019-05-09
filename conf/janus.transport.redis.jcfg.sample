@@ -15,7 +15,7 @@
 # use of the same queues and messages will get lost. The integration
 # is disabled by default, so set enabled=true if you want to use it.
 general: {
-	ip = "113.105.153.240"					# The address of the Redis server
+	ip = "127.0.0.1"					# The address of the Redis server
 	port = 6379						# The port of the Redis server (6379 by default)
 	password = "redis@linux"				# Password to use to authenticate, if needed
 }

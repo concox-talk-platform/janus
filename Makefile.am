@@ -229,6 +229,10 @@ transports_libadd = \
 	$(TRANSPORTS_LIBS) \
 	$(NULL)
 
+# hack add redis Configuration file, optimized later
+conf_DATA += conf/janus.transport.redis.jcfg.sample
+EXTRA_DIST += conf/janus.transport.redis.jcfg.sample
+
 if ENABLE_REST
 transport_LTLIBRARIES += transports/libjanus_http.la
 transports_libjanus_http_la_SOURCES = transports/janus_http.c
