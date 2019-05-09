@@ -864,10 +864,10 @@ int janus_process_incoming_request(janus_request *request) {
 
 	//add by tesion
 	char * res = NULL;
-	res = json_dumps(root, JSON_PRESERVE_ORDER);
-	printf("\n=====> Janus Process InComming Request <=====\n");
-	printf("#Request: (%s)\n", res);
-	printf("<----------------------------------------------->\n");
+	res = json_dumps(root, JSON_INDENT(4));
+	LOGD("\n=====> Janus Process InComming Request <=====\n");
+	LOGD("#Request: (%s)\n", res);
+	LOGD("<----------------------------------------------->\n");
 	free(res);
 	// end
 
@@ -3039,11 +3039,13 @@ json_t *janus_plugin_handle_sdp(janus_plugin_session *plugin_session, janus_plug
 	}
 	int offer = 0;
 	if(!strcasecmp(sdp_type, "offer")) {
+		LOGD("===> [SDP][%llu] set webrtc_flags got offer ...\n", ice_handle->handle_id);
 		/* This is an offer from a plugin */
 		offer = 1;
 		janus_flags_set(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_OFFER);
 		janus_flags_clear(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_ANSWER);
 	} else if(!strcasecmp(sdp_type, "answer")) {
+		LOGD("===> [SDP][%llu] set webrtc_flags got answer ...\n", ice_handle->handle_id);
 		/* This is an answer from a plugin */
 		janus_flags_set(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_ANSWER);
 	} else {
