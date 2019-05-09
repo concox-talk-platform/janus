@@ -11,7 +11,7 @@
 
 #ifndef _JANUS_DEBUG_H
 #define _JANUS_DEBUG_H
-
+#include <sys/time.h>
 #include <glib.h>
 #include <glib/gprintf.h>
 #include "log.h"
@@ -115,12 +115,14 @@ do { \
 
 #define LOGD(format, ...) \
 do {\
+	struct timeval tv; \
+	gettimeofday(&tv, NULL); \
 	char time_buf[32] = ""; \
 	char buf[256] = ""; \
-	time_t t = time(NULL); \
+	time_t t = tv.tv_sec; \
 	struct tm tms; \
 	localtime_r(&t, &tms); \
-	snprintf(time_buf, sizeof(time_buf), "[%d-%02d-%02d %02d:%02d:%02d]", tms.tm_year + 1900, tms.tm_mon+1, tms.tm_mday, tms.tm_hour, tms.tm_min, tms.tm_sec); \
+	snprintf(time_buf, sizeof(time_buf), "[%d-%02d-%02d %02d:%02d:%02d.%03d]", tms.tm_year + 1900, tms.tm_mon+1, tms.tm_mday, tms.tm_hour, tms.tm_min, tms.tm_sec, tv.tv_usec/1000); \
 	snprintf(buf, sizeof(buf), "[%s:%s:%d]", __FILE__, __FUNCTION__, __LINE__); \
 	printf("[DEBUG]%s%s" format, time_buf, buf, ##__VA_ARGS__); \
 } while (0)
