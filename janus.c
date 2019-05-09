@@ -4660,7 +4660,7 @@ gint main(int argc, char *argv[])
             fdfs_entity->file_path = g_strdup("/tmp/fastDFS.cache/liuxiang.txt");
             fdfs_entity->json_object_ptr = json_object();
             json_object_set_new(fdfs_entity->json_object_ptr, "uid", json_integer(123456789));
-            json_object_set_new(fdfs_entity->json_object_ptr, "type", json_string("ptt"));
+            json_object_set_new(fdfs_entity->json_object_ptr, "m_type", json_string("ptt"));
             json_object_set_new(fdfs_entity->json_object_ptr, "md5", json_string("to do"));
             json_object_set_new(fdfs_entity->json_object_ptr, "grp_id", json_integer(987654321));
             /* 由fdfs线程写入 */

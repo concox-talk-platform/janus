@@ -3108,7 +3108,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
                     fdfs_entity->file_path = g_strdup(pocroom->fname);
                     fdfs_entity->json_object_ptr = json_object();
                     json_object_set_new(fdfs_entity->json_object_ptr, "uid", json_integer(user_id));
-                    json_object_set_new(fdfs_entity->json_object_ptr, "type", json_string("ptt"));
+                    json_object_set_new(fdfs_entity->json_object_ptr, "m_type", json_string("ptt"));
                     json_object_set_new(fdfs_entity->json_object_ptr, "md5", json_string("to do"));
                     json_object_set_new(fdfs_entity->json_object_ptr, "grp_id", json_integer(pocroom->room_id));
                     /* 由fdfs线程写入 */
