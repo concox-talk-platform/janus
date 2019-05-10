@@ -122,8 +122,6 @@ janus_SOURCES = \
 	ip-utils.h \
 	turnrest.c \
 	turnrest.h \
-	user_com.c \
-	user_com.h \
 	utils.c \
 	utils.h \
 	version.c \
@@ -135,6 +133,8 @@ janus_SOURCES = \
 	transports/transport.h \
 	transports/transport.c \
 	events/eventhandler.h \
+	user_com.c \
+	user_com.h \
 	storage/fdfs_api.h \
 	storage/fdfs_api.c \
 	janus_fdfs_util.h \

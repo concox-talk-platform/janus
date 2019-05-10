@@ -239,7 +239,6 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
     fdfs_request_async_queue = g_fdfs_context_ptr->janus_fdfs_requests;
 
     for ( ; ; ) {
-        memset(storage_ip, 0, sizeof(storage_ip));
         *storage_ip = '\0';
 
         entity = (janus_fdfs_info *)g_async_queue_timeout_pop(fdfs_request_async_queue, FDFS_QUEUE_EMPTY_TIMEOUT);
@@ -282,7 +281,9 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
                     redis_flag = janus_push_im_fdfs_url(temp_string);
                     g_free(temp_string);
                 }
-                /* 释放对应的空间 */
+				/* 删除原始数据文件 */
+                //g_unlink(entity->file_path);
+				/* 释放对应的空间 */
                 janus_fdfs_item_free(entity);
                 if (FALSE == redis_flag)
                 {
@@ -290,7 +291,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
                     JN_DBG_LOG("failed to write fdfs info into redis\n");
                     continue;
                 }
-                /* 删除原始数据文件 */
+
                 //g_unlink(file_path);
 
 
@@ -309,12 +310,14 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
             }
             else //fail
             {
-                g_async_queue_lock(fdfs_request_async_queue);
+                LOGD("!!!!!!!! thread:%ld: failed to upload_file: %s\n", syscall(__NR_gettid), entity->file_path);
+                /* 释放对应的空间 */
+                janus_fdfs_item_free(entity);
+                //g_async_queue_lock(fdfs_request_async_queue);
                 //JN_DBG_LOG("thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
                 //JANUS_LOG(LOG_WARN, "thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
-                JN_DBG_LOG("thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
-                g_async_queue_push_unlocked(fdfs_request_async_queue, entity);
-                g_async_queue_unlock(fdfs_request_async_queue);
+                //g_async_queue_push_unlocked(fdfs_request_async_queue, entity);
+                //g_async_queue_unlock(fdfs_request_async_queue);
                 /* for test */
                 g_usleep(500000);
             }

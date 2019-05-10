@@ -17,7 +17,7 @@
 #define RCMD_LIST_INIT_FORMAT "RPUSH %s %s"
 
 /* redis-cli execute command: RPUSHX LIST_KEY JSON_ELEMENT */
-#define RCMD_LIST_PUSH_FORMAT "RPUSHX %s %s"
+#define RCMD_LIST_PUSH_FORMAT "RPUSH %s %s"
 
 /* 编译测试用例时请置0 */
 #define REDIS_DEMO_TEST_DISABLE 1

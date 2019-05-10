@@ -1003,7 +1003,7 @@ static void *janus_videocall_handler(void *data) {
 		}
 
 		// add 2019/04/25
-		LOGD("---> Session Info: username(%s), bitrate(%u), slowlink_count(%u)\n", session->username, session->bitrate, session->slowlink_count);
+		LOGD("---> Session Info: username(%s), bitrate(%lu), slowlink_count(%u)\n", session->username, session->bitrate, session->slowlink_count);
 		// end
 		/* Handle request */
 		error_code = 0;

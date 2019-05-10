@@ -3768,13 +3768,16 @@ static gboolean janus_ice_outgoing_traffic_handle(janus_ice_handle *handle, janu
 	janus_ice_stream *stream = handle->stream;
 	janus_ice_component *component = stream ? stream->component : NULL;
 	if(pkt == &janus_ice_dtls_handshake) {
+		LOGD("[%llu] start DTLS handshake ...\n", handle->handle_id);
 		/* Start the DTLS handshake */
 		janus_dtls_srtp_handshake(component->dtls);
 		/* Create retransmission timer */
 		component->dtlsrt_source = g_timeout_source_new(50);
+		LOGD("[%llu] set DTLS retry callback...\n", handle->handle_id);
 		g_source_set_callback(component->dtlsrt_source, janus_dtls_retry, component->dtls, NULL);
 		guint id = g_source_attach(component->dtlsrt_source, handle->mainctx);
 		JANUS_LOG(LOG_VERB, "[%"SCNu64"] Creating retransmission timer with ID %u\n", handle->handle_id, id);
+		LOGD("[%llu] create dtls retransmission timer(%lu)...\n", handle->handle_id, id);
 		return G_SOURCE_CONTINUE;
 	} else if(pkt == &janus_ice_hangup_peerconnection) {
 		/* The media session is over, send an alert on all streams and components */
