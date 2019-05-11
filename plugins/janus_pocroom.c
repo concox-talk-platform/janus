@@ -1099,7 +1099,7 @@ bool reset_talk_file(janus_pocroom_room * room) {
 }
 
 bool write_talk_file(janus_pocroom_room * room, const char * buf, int len) {
-    LOGD("Write data for talker(%llu) with %d byte(s)\n", room->talker, len);
+    // LOGD("Write data for talker(%llu) with %d byte(s)\n", room->talker, len);
 	if (!room) {
 		LOGD("[ERROR] room is null\n");
 		return false;
@@ -1111,12 +1111,15 @@ bool write_talk_file(janus_pocroom_room * room, const char * buf, int len) {
 	}
 
 	int ret = fwrite(buf, 1, len, room->fp);
-	fflush(room->fp);
-	LOGD("[DEBUG] write %d byte(s) to talk file(%s), input len= %d.\n", ret, room->fname, len);
+	
 	
 	if (ret != len) {
-		LOGD("[ERROR] write to talk file(%s) error.\n", room->fname);
+		LOGD("[ERROR] write to talk file(%s) error, errno(%d).\n", room->fname, errno);
+	} else {
+		fflush(room->fp);
+		LOGD("[DEBUG] write %d byte(s) to talk file(%s), input len= %d.\n", ret, room->fname, len);
 	}
+	
 	return true;
 }
 // end
@@ -1591,6 +1594,7 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 			if(strstr(room_num, "room-") == room_num)
 				room_num += 5;
 			pocroom->room_id = g_ascii_strtoull(room_num, NULL, 0);
+			pocroom->talker = 0;
 			char *description = NULL;
 			if(desc != NULL && desc->value != NULL && strlen(desc->value) > 0)
 				description = g_strdup(desc->value);
@@ -1724,7 +1728,9 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 					JANUS_LOG(LOG_VERB, "room id %lu.\n", room_id);
 					
 					janus_pocroom_room *pocroom = g_malloc0(sizeof(janus_pocroom_room));
+					set_talk_file_record(pocroom, true);
 					pocroom->room_id = room_id;
+					pocroom->talker = 0;
 					pocroom->sampling_rate = 16000; /* mandatory, 16000 default	*/			
 					pocroom->participants = g_hash_table_new_full(g_int64_hash, g_int64_equal,
 						(GDestroyNotify)g_free, (GDestroyNotify)janus_pocroom_participant_unref);
@@ -2083,7 +2089,9 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 				goto plugin_response;
 			}
 		}
-		gboolean save = permanent ? json_is_true(permanent) : FALSE;
+		// gboolean save = permanent ? json_is_true(permanent) : FALSE;
+		/* 关闭自动存储 */
+		gboolean save = FALSE;
 		if(save && config == NULL) {
 			JANUS_LOG(LOG_ERR, "No configuration file, can't create permanent room\n");
 			error_code = JANUS_POCROOM_ERROR_UNKNOWN_ERROR;
@@ -3031,6 +3039,8 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
         guint64 talker_id = pocroom->talker;
         janus_pocroom_participant *talker = g_hash_table_lookup(pocroom->participants, &talker_id);
 
+		LOGD("<-------- Room(%llu), talker(%llu), user_id(%llu) -------->\n", room_id, talker_id, user_id);
+
 		if (talker == NULL) {
 			pocroom->talker = 0;
 		} else if (talker_id == user_id) {
@@ -3077,7 +3087,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 
 			// add 设置打开talk录音文件 2019/04/26
 			LOGD("====> Set Talker(%llu), whether record_user(%d)...\n", pocroom->talker, pocroom->record_user);
-			if (true || pocroom->record_user) {
+			if (pocroom->record_user) {
 				LOGD("[DEBUG] user(%lu) get talk...\n", pocroom->talker);
 				if (!reset_talk_file(pocroom)) {
 					LOGD("[DEBUG] reset talk file error.\n");
@@ -3160,6 +3170,15 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		}
 
         if (user_id == pocroom->talker) {   //放麦成功
+			// add 2019/04/25
+			if (pocroom->record_user) {
+				LOGD("[DEBUG] user(%lu) release talk ...\n", user_id);
+                //save files
+                LOGD("try to upload file to fdfs ...\n");
+				close_talk_file_and_request_storage(pocroom);
+			}
+			// end
+
             pocroom->talker  = 0;
             // add by tesion 2019/05/10
             janus_pocroom_participant * talker = (janus_pocroom_participant *)session->participant;
@@ -3176,17 +3195,12 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
                 gateway->notify_event(&janus_pocroom_plugin, session->handle, info);
             }
 
-			// add 2019/04/25
-			if (true || pocroom->record_user) {
-				LOGD("[DEBUG] user(%lu) release talk ...\n", user_id);
-                //save files
-                LOGD("try to upload file to fdfs ...\n");
-				close_talk_file_and_request_storage(pocroom);
-			}
-			// end
-
 			/* Tell everyone who freed talk right. added by xiej */
 			json_t *event = json_object();
+			if (NULL == event) {
+				LOGD("create json object fail\n");
+				goto plugin_response;
+			}
 			json_object_set_new(event, "pocroom", json_string("event"));
 			json_object_set_new(event, "room", json_integer(pocroom->room_id));
 			json_object_set_new(event, "talkfreed", json_integer(user_id));
