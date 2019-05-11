@@ -56,11 +56,9 @@ static void janus_fdfs_upload_request(gpointer data, gpointer userentity);
 
 static void janus_fdfs_item_free(gpointer data)
 {
-    janus_fdfs_info *work = (janus_fdfs_info *)data;
-    if (NULL != work)
+    if (NULL != data)
     {
-        g_free(work->file_path);
-        json_decref(work->json_object_ptr);
+        g_free(data);
     }
 }
 
@@ -234,6 +232,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
     int timeout = 0;
 #endif
     GAsyncQueue *fdfs_request_async_queue = NULL;
+    json_t *fdfs_json = NULL;
 
     g_assert(NULL != g_fdfs_context_ptr);
     fdfs_request_async_queue = g_fdfs_context_ptr->janus_fdfs_requests;
@@ -272,23 +271,32 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
                 //JANUS_LOG(LOG_FATAL, "filename url: %s:%d/%s\n", storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
                 /* 准备使用redis连接池写入fastDFS的文件存储信息 */
                 /* 增加url信息 */
-                json_object_set_new(entity->json_object_ptr, "file_path", json_string(file_url_name));
-                /* redis工作完毕 */
-                char *temp_string = json_dumps(entity->json_object_ptr, JSON_PRESERVE_ORDER);
-                if (NULL != temp_string) {
-                    //JANUS_LOG(LOG_DBG, "json value: %s\n", temp_string);
-                    JN_DBG_LOG("json value: %s\n", temp_string);
-                    redis_flag = janus_push_im_fdfs_url(temp_string);
-                    g_free(temp_string);
+                fdfs_json = json_object();
+                if (NULL != fdfs_json)
+                {
+                    json_object_set_new(fdfs_json, "uid", json_string(entity->uid));
+                    json_object_set_new(fdfs_json, "m_type", json_string(entity->msg_type));
+                    json_object_set_new(fdfs_json, "md5", json_string(entity->md5));
+                    json_object_set_new(fdfs_json, "grp_id", json_string(entity->grp_id));
+                    json_object_set_new(fdfs_json, "timestamp", json_string(entity->timestamp));
+                    json_object_set_new(fdfs_json, "file_path", json_string(file_url_name));
+                    /* redis工作完毕 */
+                    char *temp_string = json_dumps(fdfs_json, JSON_PRESERVE_ORDER);
+                    if (NULL != temp_string) {
+                        //JANUS_LOG(LOG_DBG, "json value: %s\n", temp_string);
+                        JN_DBG_LOG("json value: %s\n", temp_string);
+                        redis_flag = janus_push_im_fdfs_url(temp_string);
+                        json_decref(fdfs_json);
+                        g_free(temp_string);
+                    }
+    				/* 删除原始数据文件 */
+                    //g_unlink(entity->file_path);
                 }
-				/* 删除原始数据文件 */
-                //g_unlink(entity->file_path);
-				/* 释放对应的空间 */
                 janus_fdfs_item_free(entity);
                 if (FALSE == redis_flag)
                 {
                     //JANUS_LOG(LOG_WARN, "failed to write fdfs info into redis\n");
-                    JN_DBG_LOG("failed to write fdfs info into redis\n");
+                    JN_DBG_LOG("failed to write fdfs info %s into redis\n", entity->file_path);
                     continue;
                 }
 

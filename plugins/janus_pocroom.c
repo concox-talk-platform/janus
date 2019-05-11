@@ -1021,22 +1021,15 @@ void close_talk_file_and_request_storage(janus_pocroom_room * room) {
     /* prepare to store audio file in fdfs and send to redis */
     GError *dispatch_err = NULL;
     time_t timestamp = time(NULL);
-    char integer_to_string[256];
     janus_fdfs_info *fdfs_entity = (janus_fdfs_info *)g_malloc(sizeof(janus_fdfs_info));
     if (NULL != fdfs_entity) {
-        /* 这里产生的字符串和json对象将由相关处理线程销毁 */
-        fdfs_entity->file_path = g_strdup(room->fname);
-        fdfs_entity->json_object_ptr = json_object();
-        g_snprintf(integer_to_string, sizeof(integer_to_string), "%lu", room->talker);
-        json_object_set_new(fdfs_entity->json_object_ptr, "uid", json_string(integer_to_string));
-        json_object_set_new(fdfs_entity->json_object_ptr, "m_type", json_string("ptt"));
-        json_object_set_new(fdfs_entity->json_object_ptr, "md5", json_string("to do"));
-        g_snprintf(integer_to_string, sizeof(integer_to_string), "%lu", room->room_id);
-        json_object_set_new(fdfs_entity->json_object_ptr, "grp_id", json_string(integer_to_string));
-        /* 由fdfs线程写入 */
-        //json_object_set_new(fdfs_entity->json_object_ptr, "file_path", json_string("to do"));
-        g_snprintf(integer_to_string, sizeof(integer_to_string), "%ld", timestamp);
-        json_object_set_new(fdfs_entity->json_object_ptr, "timestamp", json_string(integer_to_string));
+        /* 这里产生的fdfs势力将由相关处理线程销毁 */
+        g_snprintf(fdfs_entity->file_path, FILE_NAME_SIZE, "%s", room->fname);
+        g_snprintf(fdfs_entity->uid, FDFS_BUF_SIZE, "%lu", room->talker);
+        g_snprintf(fdfs_entity->msg_type, FDFS_BUF_SIZE, "ptt");
+        g_snprintf(fdfs_entity->md5, FDFS_BUF_SIZE, "md5");
+        g_snprintf(fdfs_entity->grp_id, FDFS_BUF_SIZE, "%lu", room->room_id);
+        g_snprintf(fdfs_entity->timestamp, FDFS_BUF_SIZE, "%ld", timestamp);
 
         /* 异步追加请求消息 */
         g_thread_pool_push(g_fdfs_context_ptr->janus_fdfs_tasks, fdfs_entity, &dispatch_err);
@@ -3335,6 +3328,11 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 	if(!session || g_atomic_int_get(&session->destroyed) || !session->participant)
 		return;
 	janus_pocroom_participant *participant = (janus_pocroom_participant *)session->participant;
+#if 1
+    LOGD("==========>>>> participant->userid(%ld), active(%s), muted(%s), decoder(%s)",
+        participant->user_id ,g_atomic_int_get(&participant->active)?"TRUE":"FALSE", participant->muted?"TRUE":"FALSE",
+        participant->decoder?"have":"none");
+#endif
 	if(!g_atomic_int_get(&participant->active) || participant->muted || !participant->decoder || !participant->room)
 		return;
 	
@@ -3531,6 +3529,11 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 		/* Enqueue the decoded frame */
 		janus_mutex_lock(&participant->qmutex);
 
+#if 1
+        LOGD("==========>>>> record_user_flag(%d) if user_id(%lu) <<<<==========\n", participant->room->record_user, participant->user_id);
+        LOGD("==========>>>> equas talker_id(%lu)(%s) <<<<==========, begins write audio file\n", participant->room->talker, 
+              participant->user_id == participant->room->talker ? "TRUE":"FALSE");
+#endif
 		// add 存储用户音频数据 2019/04/26
 		if (participant->user_id == participant->room->talker && participant->room->record_user)
 		{

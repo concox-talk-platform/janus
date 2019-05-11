@@ -8,6 +8,7 @@
 #include "storage/fdfs_api.h"
 
 #define FASTDFS_PROCESS_INDEX 0
+#define FDFS_BUF_SIZE 100
 #define FILE_NAME_SIZE 256
 #define THREAD_SUM 20
 #define WAIT_TIME_OUT 10
@@ -47,8 +48,12 @@ typedef struct janus_fdfs_context {
 }janus_fdfs_context;
 
 typedef struct janus_fdfs_info {
-    char *file_path;
-    json_t *json_object_ptr;
+    char file_path[FILE_NAME_SIZE];
+    char uid[FDFS_BUF_SIZE];
+    char msg_type[FDFS_BUF_SIZE];
+    char md5[FDFS_BUF_SIZE];
+    char grp_id[FDFS_BUF_SIZE];
+    char timestamp[FDFS_BUF_SIZE];
 }janus_fdfs_info;
 
 gboolean janus_fdfs_service_init(janus_fdfs_context *context);
