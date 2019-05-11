@@ -864,6 +864,7 @@ typedef struct janus_pocroom_room {
 	FILE * fp;
 	char fname[128];
 	bool record_user;
+    janus_mutex fname_mutex;
 	// end
 } janus_pocroom_room;
 static GHashTable *rooms;
@@ -1657,6 +1658,7 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 			pocroom->rtp_encoder = NULL;
 			pocroom->rtp_udp_sock = -1;
 			janus_mutex_init(&pocroom->rtp_mutex);
+            janus_mutex_init(&pocroom->fname_mutex);
 			janus_refcount_init(&pocroom->ref, janus_pocroom_room_free);
 			JANUS_LOG(LOG_VERB, "Created pocroom: %"SCNu64" (%s, %s, secret: %s, pin: %s)\n",
 				pocroom->room_id, pocroom->room_name,
@@ -2200,6 +2202,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		pocroom->rtp_encoder = NULL;
 		pocroom->rtp_udp_sock = -1;
 		janus_mutex_init(&pocroom->rtp_mutex);
+        janus_mutex_init(&pocroom->fname_mutex);
 		janus_refcount_init(&pocroom->ref, janus_pocroom_room_free);
 		g_hash_table_insert(rooms, janus_uint64_dup(pocroom->room_id), pocroom);
 		JANUS_LOG(LOG_VERB, "Created pocroom: %"SCNu64" (%s, %s, secret: %s, pin: %s)\n",
@@ -3555,8 +3558,12 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 				/* FIXME Smoothen/Normalize instead of truncating? */
 				outBuffer[i] = buffer[i];
 			}
-
+/* 调试静音问题 */
+#if 0
+            janus_mutex_lock(&participant->room->fname_mutex);
 			write_talk_file(participant->room, (char *)outBuffer, sizeof(opus_int16) * samples);
+            janus_mutex_unlock(&participant->room->fname_mutex);
+#endif
 		}
 		// end
 

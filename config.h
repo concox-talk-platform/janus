@@ -15,9 +15,9 @@
 
 /* FIXME: integrated directory configuration to janus config file later */
 /* default directory to save audio files */
-#define DEF_JANUS_AUDIO_CACHE_DIR "/data/janusCache/audio"
+#define DEF_JANUS_AUDIO_CACHE_DIR "/data/janus_cache/audio"
 /* default directory to save video files */
-#define DEF_JANUS_VIDEO_CACHE_DIR "/data/janusCache/video"
+#define DEF_JANUS_VIDEO_CACHE_DIR "/data/janus_cache/video"
 
 /*! \brief Configuration element type */
 typedef enum janus_config_type {

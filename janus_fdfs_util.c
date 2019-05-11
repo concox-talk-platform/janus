@@ -267,7 +267,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
             if (result == 0) //success
             {
                 /* 是否拼接成完整的url，这里默认没有 */
-                JN_DBG_LOG("filename url: %s:%d/%s\n", storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
+                JN_DBG_LOG("==========>>>> upload file %s succefully, get filename url: %s:%d/%s\n", entity->file_path, storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
                 //JANUS_LOG(LOG_FATAL, "filename url: %s:%d/%s\n", storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
                 /* 准备使用redis连接池写入fastDFS的文件存储信息 */
                 /* 增加url信息 */
