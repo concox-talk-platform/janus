@@ -1110,6 +1110,19 @@ janus_ice_handle *janus_ice_handle_create(void *core_session, const char *opaque
 	handle->app_handle = NULL;
 	handle->queued_packets = g_async_queue_new();
 	janus_mutex_init(&handle->mutex);
+
+#if 0
+    /* debug for dump rtp packet to files */
+    char dumpfile[128];
+    g_snprintf(dumpfile, 128, "handle_%lu_%lu.pcap", handle->handle_id, handle->created);
+    handle->text2pcap = janus_text2pcap_create("/data/janusCache/rtpdump", dumpfile, FALSE, FALSE);
+			if(handle->text2pcap != NULL) {
+				LOGD("==========>>>>RAPHAEL rtp dump file enabled successfully!\n");
+                g_atomic_int_set(&handle->dump_packets, 1);
+			}
+    /* end */
+#endif
+    
 	janus_session_handles_insert(session, handle);
 	return handle;
 }

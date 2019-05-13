@@ -626,6 +626,7 @@ room-<unique room ID>: {
 #include <time.h>
 #include <stdbool.h>
 
+#include <arpa/inet.h>
 
 #include "../apierror.h"
 #include "../config.h"
@@ -1205,11 +1206,13 @@ static void janus_pocroom_room_free(const janus_refcount *pocroom_ref) {
 		opus_encoder_destroy(pocroom->rtp_encoder);
 	g_hash_table_destroy(pocroom->rtp_forwarders);
 
+    janus_mutex_lock(&pocroom->fname_mutex);
 	// add 2019/04/26
 	if (pocroom->fp) {
 		close_talk_file(pocroom);
 	}
 	// end
+	janus_mutex_unlock(&pocroom->fname_mutex);
 
 	g_free(pocroom);
 }
@@ -1581,7 +1584,9 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 			janus_config_item * record_user = janus_config_get(config, cat, janus_config_type_item, "record_user");
 			bool need_record = record_user && record_user->value && janus_is_true(record_user->value);
 			set_talk_file_record(pocroom, true);
+            janus_mutex_lock(&pocroom->fname_mutex);
 			clean_talk_file(pocroom);
+            janus_mutex_unlock(&pocroom->fname_mutex);
 			// end
 
 			const char *room_num = cat->name;
@@ -3085,9 +3090,11 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 			LOGD("====> Set Talker(%llu), whether record_user(%d)...\n", pocroom->talker, pocroom->record_user);
 			if (pocroom->record_user) {
 				LOGD("[DEBUG] user(%lu) get talk...\n", pocroom->talker);
+                janus_mutex_lock(&pocroom->fname_mutex);
 				if (!reset_talk_file(pocroom)) {
 					LOGD("[DEBUG] reset talk file error.\n");
 				}
+                janus_mutex_unlock(&pocroom->fname_mutex);
 			}
 			// end
 
@@ -3171,7 +3178,9 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 				LOGD("[DEBUG] user(%lu) release talk ...\n", user_id);
                 //save files
                 LOGD("try to upload file to fdfs ...\n");
+                janus_mutex_lock(&pocroom->fname_mutex);
 				close_talk_file_and_request_storage(pocroom);
+                janus_mutex_unlock(&pocroom->fname_mutex);
 			}
 			// end
 
@@ -3331,8 +3340,8 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 	if(!session || g_atomic_int_get(&session->destroyed) || !session->participant)
 		return;
 	janus_pocroom_participant *participant = (janus_pocroom_participant *)session->participant;
-#if 1
-    LOGD("==========>>>> participant->userid(%ld), active(%s), muted(%s), decoder(%s)",
+#if 0
+    LOGD("==========>>>> participant->userid(%ld), active(%s), muted(%s), decoder(%s)\n",
         participant->user_id ,g_atomic_int_get(&participant->active)?"TRUE":"FALSE", participant->muted?"TRUE":"FALSE",
         participant->decoder?"have":"none");
 #endif
@@ -3529,10 +3538,8 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 			g_free(pkt);
 			return;
 		}
-		/* Enqueue the decoded frame */
-		janus_mutex_lock(&participant->qmutex);
 
-#if 1
+#if 0
         LOGD("==========>>>> record_user_flag(%d) if user_id(%lu) <<<<==========\n", participant->room->record_user, participant->user_id);
         LOGD("==========>>>> equas talker_id(%lu)(%s) <<<<==========, begins write audio file\n", participant->room->talker, 
               participant->user_id == participant->room->talker ? "TRUE":"FALSE");
@@ -3559,7 +3566,7 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 				outBuffer[i] = buffer[i];
 			}
 /* 调试静音问题 */
-#if 0
+#if 1
             janus_mutex_lock(&participant->room->fname_mutex);
 			write_talk_file(participant->room, (char *)outBuffer, sizeof(opus_int16) * samples);
             janus_mutex_unlock(&participant->room->fname_mutex);
@@ -3567,6 +3574,8 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 		}
 		// end
 
+		/* Enqueue the decoded frame */
+		janus_mutex_lock(&participant->qmutex);
 		/* Insert packets sorting by sequence number */
 		participant->inbuf = g_list_insert_sorted(participant->inbuf, pkt, &janus_pocroom_rtp_sort);
 		if(participant->prebuffering) {
@@ -4993,6 +5002,10 @@ static void *janus_pocroom_mixer_thread(void *data) {
 						forwarder->timestamp += OPUS_SAMPLES;
 						rtph->timestamp = htonl(forwarder->timestamp);
 						/* Send RTP packet */
+#if 0
+						char ipaddr[INET6_ADDRSTRLEN];
+						LOGD("sendto address %s: %u\n", inet_ntop(AF_INET, &(forwarder->serv_addr.sin_addr.s_addr), ipaddr, sizeof(ipaddr)), ntohs(forwarder->serv_addr.sin_port));
+#endif
 						if(sendto(pocroom->rtp_udp_sock, rtpbuffer, length+12, 0, (struct sockaddr*)&forwarder->serv_addr, sizeof(forwarder->serv_addr)) < 0) {
 							JANUS_LOG(LOG_HUGE, "Error forwarding mixed RTP packet for room %"SCNu64"... %s (len=%d)...\n",
 								pocroom->room_id, strerror(errno), length+12);
