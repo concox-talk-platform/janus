@@ -267,7 +267,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
             if (result == 0) //success
             {
                 /* 是否拼接成完整的url，这里默认没有 */
-                JN_DBG_LOG("filename url: %s:%d/%s\n", storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
+                JN_DBG_LOG("==========>>>> upload file %s succefully, get filename url: %s:%d/%s\n", entity->file_path, storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
                 //JANUS_LOG(LOG_FATAL, "filename url: %s:%d/%s\n", storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
                 /* 准备使用redis连接池写入fastDFS的文件存储信息 */
                 /* 增加url信息 */
@@ -318,9 +318,22 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
             }
             else //fail
             {
-                LOGD("!!!!!!!! thread:%ld: failed to upload_file: %s\n", syscall(__NR_gettid), entity->file_path);
-                /* 释放对应的空间 */
-                janus_fdfs_item_free(entity);
+                //LOGD("!!!!!!!! thread:%ld: failed to upload_file: %s\n", syscall(__NR_gettid), entity->file_path);
+                /* 重新连接fastdfs */
+                dfs_destroy();
+                if ((result = dfs_init(process_index, g_fdfs_context_ptr->fdfs_client_conf)) != 0)
+                {
+                    JN_DBG_LOG("!!!! FATAL Error !!!!: Failed to connect to fastDFS\n");
+                }
+                else
+                {
+                    result = upload_file_by_filename(entity->file_path, ext_name, file_url_name, storage_ip);
+                    if (0 != result)
+                    {
+                        LOGD("!!!! FATAL !!!! thread:%ld: failed to upload_file again: %s\n", syscall(__NR_gettid), entity->file_path);
+                    }
+                }
+                janus_fdfs_item_free(entity);
                 //g_async_queue_lock(fdfs_request_async_queue);
                 //JN_DBG_LOG("thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
                 //JANUS_LOG(LOG_WARN, "thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
