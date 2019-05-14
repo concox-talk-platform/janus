@@ -139,6 +139,8 @@ janus_SOURCES = \
 	storage/fdfs_api.c \
 	janus_fdfs_util.h \
 	janus_fdfs_util.c \
+	codec/mp3_encoder.h \
+	codec/mp3_encoder.c \
 	$(NULL)
 
 janus_CFLAGS = \

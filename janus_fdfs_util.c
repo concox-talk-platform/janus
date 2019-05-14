@@ -18,6 +18,7 @@
 #include "fastcommon/logger.h"
 #include "redispool.h"
 #include "janus_fdfs_util.h"
+#include "codec/mp3_encoder.h"
 
 #if FDFS_DEMO_TEST_DISABLE
 #include "config.h"
@@ -44,6 +45,8 @@ extern janus_fdfs_info pthread_para;
 static gpointer janus_fdfs_dispatch_thread_test(gpointer data);
 #endif
 
+static gboolean convert_wav_to_mp3(char *filename);
+
 static char *janus_fdfs_extname_get(char *filename, char delim);
 
 static void janus_fdfs_item_free(gpointer data);
@@ -53,6 +56,25 @@ static gboolean janus_fdfs_cache_directory_init(void);
 static gpointer janus_fdfs_upload_handler(gpointer data);
 
 static void janus_fdfs_upload_request(gpointer data, gpointer userentity);
+
+static gboolean convert_wav_to_mp3(char *filename) {
+    char buf[FILE_NAME_SIZE];
+
+    if (NULL == filename)
+        return FALSE;
+
+    get_mp3_file_name(filename, buf, FILE_NAME_SIZE);
+    int ret = pcm2mp3(filename, buf, NULL);
+    if (0 != ret) {
+        JN_DBG_LOG("convert pcm(%s) to mp3(%s) fail, code: %d\n", filename, buf, ret);
+        return FALSE;
+    }
+    /* 删除原wav文件 */
+    //g_unlink(filename);
+    g_strlcpy(filename, buf, FILE_NAME_SIZE);
+
+    return TRUE;
+}
 
 static void janus_fdfs_item_free(gpointer data)
 {
@@ -251,6 +273,13 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
             {
                 //JANUS_LOG(LOG_WARN, "Error: file \"%s\" not exist\n", entity->file_path);
                 JN_DBG_LOG("Error: file \"%s\" not exist\n", entity->file_path);
+                janus_fdfs_item_free(entity);
+                continue;
+            }
+            /* 将wav文件转换为mp3文件 */
+            if (FALSE == convert_wav_to_mp3(entity->file_path))
+            {
+                JN_DBG_LOG("Error: failed to get mp3 file\n");
                 janus_fdfs_item_free(entity);
                 continue;
             }

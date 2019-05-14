@@ -355,6 +355,12 @@ AC_CHECK_LIB([fastcommon],
              [AC_MSG_ERROR([WARNING: libfastcommon not found.])]
              )
 
+AC_CHECK_LIB([mp3lame],
+             [get_lame_version],
+             [JANUS_MANUAL_LIBS+=" -lmp3lame"],
+             [AC_MSG_ERROR([WARNING: libmp3lame not found.])]
+             )
+
 AC_CHECK_LIB([nice],
              [nice_agent_set_port_range],
              [AC_DEFINE(HAVE_PORTRANGE)],
