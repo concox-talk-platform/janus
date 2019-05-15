@@ -971,178 +971,30 @@ typedef struct wav_header {
 	uint32_t blocksize;
 } wav_header;
 
-void clean_talk_file(janus_pocroom_room * room);
-void set_talk_file_name(char * src, guint64 room_id, guint64 user_id);
-void set_talk_file_record(janus_pocroom_room * room, bool record);
-void close_talk_file(janus_pocroom_room * room);
-void close_talk_file_and_request_storage(janus_pocroom_room * room);
-bool reset_talk_file(janus_pocroom_room * room);
-bool write_talk_file(janus_pocroom_room * room, const char * buf, int len);
+static void set_talk_file_name(char * src, guint64 room_id, guint64 user_id);
+static void set_talk_file_record(janus_pocroom_room * room, bool record);
+static bool fastdfs_push(const char * path, guint64 gid, guint64 talker);
+static bool file_metadata_init(file_metadata * fm, size_t duration, guint64 * pgroup, guint64 * ptalker, guint32 * psample);
+static void file_metadata_clear(file_metadata * fm);
+static bool file_metadata_internal_write(file_metadata * fm, guint64 group, guint64 talker, const char * buf, size_t len);
+static bool file_metadata_storage(file_metadata * fm);
+static bool file_metadata_write(file_metadata * fm, guint64 group_id, guint64 talker, const char * buf, size_t len);
 
-// add record user audio stream data 2019/04/26
-void clean_talk_file(janus_pocroom_room * room) {
-	if (!room) return;
-
-	room->fp = NULL;
-	memset(room->fname, 0, sizeof(room->fname));
-}
-
-void set_talk_file_name(char * src, guint64 room_id, guint64 user_id) {
+static void set_talk_file_name(char * src, guint64 room_id, guint64 user_id) {
 	if (!src) return;
 	time_t tm = time(NULL);
 	sprintf(src, "%s/room_%lu_user_%lu_%ld.wav", DEF_JANUS_AUDIO_CACHE_DIR, room_id, user_id, tm);
 	LOGD("[DEBUG] set talk file to %s\n", src);
 }
 
-void set_talk_file_record(janus_pocroom_room * room, bool record) {
+static void set_talk_file_record(janus_pocroom_room * room, bool record) {
 	if (!room) return;
 
 	room->record_user = record;
 }
 
-void close_talk_file(janus_pocroom_room * room) {
-	if (!room || !room->fp) return;
-	/* Update the length in the header */
-	LOGD("[DEBUG] before close talk file(%s), update wav header...\n", room->fname);
-	fseek(room->fp, 0, SEEK_END);
-	long int size = ftell(room->fp);
-	if(size >= 8) {
-		size -= 8;
-		fseek(room->fp, 4, SEEK_SET);
-		fwrite(&size, sizeof(uint32_t), 1, room->fp);
-		size += 8;
-		fseek(room->fp, 40, SEEK_SET);
-		fwrite(&size, sizeof(uint32_t), 1, room->fp);
-		fflush(room->fp);
-	}
-
-	LOGD("[DEBUG] close talk file(%s)\n", room->fname);
-	fclose(room->fp);
-	clean_talk_file(room);
-}
-
-void close_talk_file_and_request_storage(janus_pocroom_room * room) {
-	if (!room || !room->fp) return;
-	/* Update the length in the header */
-	LOGD("[DEBUG] before close talk file(%s), update wav header...\n", room->fname);
-	fseek(room->fp, 0, SEEK_END);
-	long int size = ftell(room->fp);
-	if(size >= 8) {
-		size -= 8;
-		fseek(room->fp, 4, SEEK_SET);
-		fwrite(&size, sizeof(uint32_t), 1, room->fp);
-		size += 8;
-		fseek(room->fp, 40, SEEK_SET);
-		fwrite(&size, sizeof(uint32_t), 1, room->fp);
-		fflush(room->fp);
-	}
-
-	LOGD("[DEBUG] close talk file(%s)\n", room->fname);
-	fclose(room->fp);
-    /* process generated audio file upload and notity redis */
-    /* added 2019/05/08 Ral */
-    /* prepare to store audio file in fdfs and send to redis */
-    GError *dispatch_err = NULL;
-    time_t timestamp = time(NULL);
-    janus_fdfs_info *fdfs_entity = (janus_fdfs_info *)g_malloc(sizeof(janus_fdfs_info));
-    if (NULL != fdfs_entity) {
-        /* 这里产生的fdfs势力将由相关处理线程销毁 */
-        g_snprintf(fdfs_entity->file_path, FILE_NAME_SIZE, "%s", room->fname);
-        g_snprintf(fdfs_entity->uid, FDFS_BUF_SIZE, "%lu", room->talker);
-        g_snprintf(fdfs_entity->msg_type, FDFS_BUF_SIZE, "ptt");
-        g_snprintf(fdfs_entity->md5, FDFS_BUF_SIZE, "md5");
-        g_snprintf(fdfs_entity->grp_id, FDFS_BUF_SIZE, "%lu", room->room_id);
-        g_snprintf(fdfs_entity->timestamp, FDFS_BUF_SIZE, "%ld", timestamp);
-
-        /* 异步追加请求消息 */
-        g_thread_pool_push(g_fdfs_context_ptr->janus_fdfs_tasks, fdfs_entity, &dispatch_err);
-        if (NULL != dispatch_err) {
-            JANUS_LOG(LOG_WARN, "failed to push fdfs request task in thread pool, error %d (%s)\n",
-                dispatch_err->code, dispatch_err->message ? dispatch_err->message : "??");
-            /* 线程启动错误后应该怎么办?先记录日志,后续再处理 */
-        }
-        g_clear_error(&dispatch_err);
-    }else {
-        LOGD("[DEBUG] fdfs object malloc failed\n");
-    }
-	clean_talk_file(room);
-}
-
-bool reset_talk_file(janus_pocroom_room * room) {
-	if (!room) {
-		return false;
-	}
-
-	if (room->fp) {
-		close_talk_file(room);
-	}
-
-	set_talk_file_name(room->fname, room->room_id, room->talker);
-
-	room->fp = fopen(room->fname, "wb");
-	if (!room->fp) {
-		LOGD("[DEBUG] fopen(%s) error: %d\n", room->fname, errno);
-		return false;
-	}
-
-	LOGD("[DEBUG] open talk file(%s) ok.\n", room->fname);
-	/* Write WAV header */
-	wav_header header = {
-		{'R', 'I', 'F', 'F'},
-		0,
-		{'W', 'A', 'V', 'E'},
-		{'f', 'm', 't', ' '},
-		16,
-		1,
-		1,
-		room->sampling_rate,
-		room->sampling_rate * 2,
-		2,
-		16,
-		{'d', 'a', 't', 'a'},
-		0
-	};
-	if(fwrite(&header, 1, sizeof(header), room->fp) != sizeof(header)) {
-		LOGD("[DEBUG] Error writing WAV header...\n");
-		close_talk_file(room);
-		return false;
-	}
-
-	fflush(room->fp);
-	LOGD("[DEBUG] write talk file(%s) wav header ok.\n", room->fname);
-
-	return true;
-}
-
-bool write_talk_file(janus_pocroom_room * room, const char * buf, int len) {
-    // LOGD("Write data for talker(%llu) with %d byte(s)\n", room->talker, len);
-	if (!room) {
-		LOGD("[ERROR] room is null\n");
-		return false;
-	}
-
-	if (!room->fp) {
-		LOGD("[ERROR] room(%lu) fp is null\n", room->room_id);
-		return false;
-	}
-
-	int ret = fwrite(buf, 1, len, room->fp);
-	
-	
-	if (ret != len) {
-		LOGD("[ERROR] write to talk file(%s) error, errno(%d).\n", room->fname, errno);
-	} else {
-		fflush(room->fp);
-		LOGD("[DEBUG] write %d byte(s) to talk file(%s), input len= %d.\n", ret, room->fname, len);
-	}
-	
-	return true;
-}
-
-// end
-
 // add by tesion 2019/05/14
-bool fastdfs_push(const char * path, guint64 gid, guint64 talker) {
+static bool fastdfs_push(const char * path, guint64 gid, guint64 talker) {
 	if (NULL == path) return false;
 
 	GError *dispatch_err = NULL;
@@ -1176,7 +1028,7 @@ bool fastdfs_push(const char * path, guint64 gid, guint64 talker) {
 	return true;
 }
 
-bool file_metadata_init(file_metadata * fm, size_t duration, guint64 * pgroup, guint64 * ptalker, guint32 * psample) {
+static bool file_metadata_init(file_metadata * fm, size_t duration, guint64 * pgroup, guint64 * ptalker, guint32 * psample) {
 	if (NULL == fm) return false;
 
 	file_metadata_clear(fm);
@@ -1192,7 +1044,7 @@ bool file_metadata_init(file_metadata * fm, size_t duration, guint64 * pgroup, g
 	return true;
 }
 
-void file_metadata_clear(file_metadata * fm) {
+static void file_metadata_clear(file_metadata * fm) {
 	if (NULL == fm) return;
 
 	if (fm->fp) {
@@ -1212,7 +1064,7 @@ void file_metadata_clear(file_metadata * fm) {
 	fm->sample = 0;
 }
 
-bool file_metadata_internal_write(file_metadata * fm, guint64 group, guint64 talker, const char * buf, size_t len) {
+static bool file_metadata_internal_write(file_metadata * fm, guint64 group, guint64 talker, const char * buf, size_t len) {
 	if (NULL == fm) return false;
 
 	if (NULL == fm->fp) {
@@ -1277,7 +1129,7 @@ bool file_metadata_internal_write(file_metadata * fm, guint64 group, guint64 tal
 	return true;
 }
 
-bool file_metadata_storage(file_metadata * fm) {
+static bool file_metadata_storage(file_metadata * fm) {
 	if (NULL == fm) return false;
 
 	if (NULL == fm->fp) {
@@ -1321,7 +1173,7 @@ bool file_metadata_storage(file_metadata * fm) {
 	return true;
 }
 
-bool file_metadata_write(file_metadata * fm, guint64 group_id, guint64 talker, const char * buf, size_t len) {
+static bool file_metadata_write(file_metadata * fm, guint64 group_id, guint64 talker, const char * buf, size_t len) {
 	if (NULL == fm || NULL == fm->fp) return false;
 
 	return file_metadata_internal_write(fm, group_id, talker, buf, len);

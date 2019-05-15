@@ -240,14 +240,9 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
     janus_fdfs_info *entity;
     char storage_ip[IP_ADDRESS_SIZE];
 
-    /* 
-     * 用于获取文件名及文件类型名：
-     * aaa.txt被分割成aaa和txt存在这个指针指向的数组中
-     * 使用完要记得释放
-     */
+    /* 用于获取文件类型名：*/
     char *ext_name = NULL;
     char file_url_name[FILE_NAME_SIZE];
-    //int store_bytes = 0;
     gboolean redis_flag = FALSE;
     int result;
 #ifdef TIME_CACULATE
@@ -265,7 +260,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
         entity = (janus_fdfs_info *)g_async_queue_timeout_pop(fdfs_request_async_queue, FDFS_QUEUE_EMPTY_TIMEOUT);
         if (NULL != entity) {
             /* 测试用,上传缓冲区文本 */
-            //store_bytes = strlen(entity->file_name);
+            //int store_bytes = strlen(entity->file_name);
             //result = upload_file_by_buff(entity->file_name, store_bytes, entity->file_ext_name, entity->fdfs_url, storage_ip);
             
             /* 上传指定文件,且文件需要指定类型扩展名 */
@@ -329,8 +324,6 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
                     continue;
                 }
 
-                //g_unlink(file_path);
-
 
 #ifdef TIME_CACULATE
                 /* 测试运行时间 */
@@ -362,14 +355,19 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
                         LOGD("!!!! FATAL !!!! thread:%ld: failed to upload_file again: %s\n", syscall(__NR_gettid), entity->file_path);
                     }
                 }
+                /* 删除转换的mp3文件 */
+                //g_unlink(entity->file_path);
                 janus_fdfs_item_free(entity);
-                //g_async_queue_lock(fdfs_request_async_queue);
-                //JN_DBG_LOG("thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
-                //JANUS_LOG(LOG_WARN, "thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
-                //g_async_queue_push_unlocked(fdfs_request_async_queue, entity);
-                //g_async_queue_unlock(fdfs_request_async_queue);
+#if 0
+                /* 失败的上传推回去重做,这样就不能做上面的free操作 */
+                g_async_queue_lock(fdfs_request_async_queue);
+                JN_DBG_LOG("thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
+                JANUS_LOG(LOG_WARN, "thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
+                g_async_queue_push_unlocked(fdfs_request_async_queue, entity);
+                g_async_queue_unlock(fdfs_request_async_queue);
+#endif
                 /* for test */
-                g_usleep(500000);
+                g_usleep(100000);
             }
 
 
