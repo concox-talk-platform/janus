@@ -23,7 +23,7 @@
 #define REDIS_DEMO_TEST_DISABLE 1
 #if REDIS_DEMO_TEST_DISABLE
 #define JN_REDIS_LOG(fmt, ...) \
-        JANUS_LOG(LOG_FATAL, "\n#### JANUS REDIS: ####"fmt, ##__VA_ARGS__)
+        JANUS_LOG(LOG_INFO, fmt, ##__VA_ARGS__)
 #else
 #if 1
 #define JN_REDIS_LOG(fmt, ...) \

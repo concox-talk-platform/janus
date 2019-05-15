@@ -22,18 +22,12 @@
 
 /* 编译测试用例时请置0 */
 #define FDFS_DEMO_TEST_DISABLE 1
-#if FDFS_DEMO_TEST_DISABLE
-#include "debug.h"
-#define JN_DBG_LOG(fmt, ...) \
-        JANUS_LOG(LOG_INFO, "\n#### JANUS FASTDFS: ####"fmt, ##__VA_ARGS__)
-#else
+
 #if 1
 #define JN_DBG_LOG(fmt, ...) \
         g_printf(fmt, ##__VA_ARGS__)
 #else
 #define JN_DBG_LOG(fmt, ...)
-#endif
-#define JANUS_LOG(fmt, ...)
 #endif
 
 #ifdef __cplusplus

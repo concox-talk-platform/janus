@@ -22,7 +22,7 @@ typedef struct encoder_cfg {
  * @return
  *  if success, return handle; otherwise NULL
  */
-encoder_t get_mp3_encoder();
+encoder_t get_mp3_encoder(void);
 
 /**
  * @brief change the default setting of lame

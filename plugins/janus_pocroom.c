@@ -881,11 +881,8 @@ typedef struct janus_pocroom_room {
 	guint64 talker;				/* Who own talk right */
 
 	// add 2019/04/26
-	FILE * fp;
-	char fname[128];
 	bool record_user;
 	janus_mutex fname_mutex;
-
 	file_metadata fdata;
 	// end
 } janus_pocroom_room;
@@ -1039,7 +1036,7 @@ static bool file_metadata_init(file_metadata * fm, size_t duration, guint64 * pg
 	fm->talker = ptalker ? *ptalker : 0;
 	fm->sample = psample ? *psample : DEFAULT_AUDIO_SAMPLE;
 
-	LOGD("metadata init: duration(%llu), group(%llu), talker(%llu).\n", fm->duration, fm->gid, fm->talker);
+	LOGD("metadata init: duration(%lu), group(%lu), talker(%lu).\n", fm->duration, fm->gid, fm->talker);
 
 	return true;
 }
@@ -1095,7 +1092,7 @@ static bool file_metadata_internal_write(file_metadata * fm, guint64 group, guin
 
 		LOGD("metadata file(%s) write header.\n", fm->path);
 		if (fwrite(&header, 1, sizeof(header), fm->fp) != sizeof(header)) {
-			LOGD("metadata file(%s) write header error: %d\n", fm->fp, errno);
+			LOGD("metadata file(%s) write header error: %d\n", fm->path, errno);
 			fclose(fm->fp);
 			fm->fp = NULL;
 			return false;
@@ -1111,17 +1108,17 @@ static bool file_metadata_internal_write(file_metadata * fm, guint64 group, guin
 	int rest = MAX_FILE_SIZE - fm->offset;
 	time_t cur_time = time(NULL);
 
-	// LOGD("METADATA OFFSET: %llu, rest: %d\n", fm->offset, rest);
+	// LOGD("METADATA OFFSET: %lu, rest: %d\n", fm->offset, rest);
 	// LOGD("METADATA TIME: %ld - %ld = %ld, duration(%ld). \n", cur_time, fm->start_record,  cur_time - fm->start_record, fm->duration);
 
-	if (rest <= 0 || (fm->start_record + fm->duration) < cur_time) {
+	if (rest <= 0 || (fm->start_record + (time_t)fm->duration) < cur_time) {
 		// 是否立刻存储？
-		LOGD("[Room: %llu][%llu]metadata file write limited.\n", fm->gid, fm->talker);
+		LOGD("[Room: %lu][%lu]metadata file write limited.\n", fm->gid, fm->talker);
 		return false;
 	}
 
 	if (buf && 0 < len) {
-		rest = (rest >= len) ? len : rest;
+		rest = (rest >= (int)len) ? (int)len : rest;
 		memcpy(fm->data + fm->offset, buf, rest);
 		fm->offset += rest;
 	}
@@ -1133,20 +1130,20 @@ static bool file_metadata_storage(file_metadata * fm) {
 	if (NULL == fm) return false;
 
 	if (NULL == fm->fp) {
-		LOGD("[Room: %llu][%llu]metadata file pointer is null.\n", fm->gid, fm->talker);
+		LOGD("[Room: %lu][%lu]metadata file pointer is null.\n", fm->gid, fm->talker);
 		return false;
 	}
 
 	if (MAX_FILE_SIZE < fm->offset) {
-		LOGD("[Room: %llu][%llu]metadata file offset value(%lu) is invalid.\n", fm->gid, fm->talker, fm->offset);
+		LOGD("[Room: %lu][%lu]metadata file offset value(%lu) is invalid.\n", fm->gid, fm->talker, fm->offset);
 	}
 
 	fm->end_record = time(NULL);
 	size_t write_bytes = fwrite(fm->data, 1, fm->offset, fm->fp);
 	if (write_bytes != fm->offset) {
-		LOGD("[Room: %llu][%llu]metadata file(%s) write error(%d).\n", fm->gid, fm->talker, fm->path, errno);
+		LOGD("[Room: %lu][%lu]metadata file(%s) write error(%d).\n", fm->gid, fm->talker, fm->path, errno);
 	} else {
-		LOGD("[Room: %llu][%llu]metadata file(%s) store %lu byte(s).\n", fm->gid, fm->talker, fm->path, write_bytes);
+		LOGD("[Room: %lu][%lu]metadata file(%s) store %lu byte(s).\n", fm->gid, fm->talker, fm->path, write_bytes);
 		fflush(fm->fp);
 	}
 
@@ -1299,9 +1296,6 @@ static void janus_pocroom_room_free(const janus_refcount *pocroom_ref) {
 	// add 2019/04/26
 	janus_mutex_lock(&pocroom->fname_mutex);
 	file_metadata_clear(&pocroom->fdata);
-	// if (pocroom->fp) {
-	// 	close_talk_file(pocroom);
-	// }
 	janus_mutex_unlock(&pocroom->fname_mutex);
 	// end
 
@@ -1687,13 +1681,10 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 			pocroom->sampling_rate = atol(sampling->value);
 
 			// add 2019/04/26
-			janus_config_item * record_user = janus_config_get(config, cat, janus_config_type_item, "record_user");
-			bool need_record = record_user && record_user->value && janus_is_true(record_user->value);
-			// janus_mutex_lock(&pocroom->fname_mutex);
+			//janus_config_item * record_user = janus_config_get(config, cat, janus_config_type_item, "record_user");
+			//bool need_record = record_user && record_user->value && janus_is_true(record_user->value);
 			set_talk_file_record(pocroom, true);
 			file_metadata_init(&pocroom->fdata, MAX_FILE_DURATION, &pocroom->room_id, &pocroom->talker, &pocroom->sampling_rate);
-			// clean_talk_file(pocroom);
-			// janus_mutex_unlock(&pocroom->fname_mutex);
 			// end
 
 			switch(pocroom->sampling_rate) {
@@ -1842,6 +1833,7 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 					pocroom->rtp_encoder = NULL;
 					pocroom->rtp_udp_sock = -1;
 					janus_mutex_init(&pocroom->rtp_mutex);
+					janus_mutex_init(&pocroom->fname_mutex);
 					janus_refcount_init(&pocroom->ref, janus_pocroom_room_free);
 					JANUS_LOG(LOG_VERB, "Created pocroom: %"SCNu64" (%s, %s, secret: %s, pin: %s)\n",
 						pocroom->room_id, pocroom->room_name,
@@ -1849,9 +1841,12 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 						pocroom->room_secret ? pocroom->room_secret : "no secret",
 						pocroom->room_pin ? pocroom->room_pin : "no pin");
 
+/* TODO: why comment this code, if bad influence, Maybe used to relay mix audio rtp data */
+
 					// if(janus_pocroom_create_static_rtp_forwarder(cat, pocroom)) {
 					// 	JANUS_LOG(LOG_ERR, "Error creating static RTP forwarder (room %"SCNu64")\n", pocroom->room_id);
 					// }
+/* END */
 
 					/* We need a thread for the mix */
 					GError *error = NULL;
@@ -2148,7 +2143,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		timestamp_val = json_integer_value(timestamp);
 	}
 
-	LOGD("get request(%s) COST_TIME: %d \n", request_text, cur_timestamp - timestamp_val);
+	LOGD("get request(%s) COST_TIME: %lu \n", request_text, cur_timestamp - timestamp_val);
 	// end
 
 	if(!strcasecmp(request_text, "create")) {
@@ -2183,7 +2178,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		json_t *audio_level_average = json_object_get(root, "audio_level_average");
 		json_t *record = json_object_get(root, "record");
 		json_t *recfile = json_object_get(root, "record_file");
-		json_t *permanent = json_object_get(root, "permanent");
+		//json_t *permanent = json_object_get(root, "permanent");
 		if(allowed) {
 			/* Make sure the "allowed" array only contains strings */
 			gboolean ok = TRUE;
@@ -3155,7 +3150,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
         guint64 talker_id = pocroom->talker;
         janus_pocroom_participant *talker = g_hash_table_lookup(pocroom->participants, &talker_id);
 
-		LOGD("<-------- Room(%llu), talker(%llu), user_id(%llu) -------->\n", room_id, talker_id, user_id);
+		LOGD("<-------- Room(%lu), talker(%lu), user_id(%lu) -------->\n", room_id, talker_id, user_id);
 
 		if (talker == NULL) {
 			pocroom->talker = 0;
@@ -3184,7 +3179,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
                 janus_pocroom_participant * participant = (janus_pocroom_participant *)session->participant;
                 if (participant) {
                     participant->muted = json_is_true(muted);
-                    LOGD("Talker(%llu) set muted(%d)...\n", participant->user_id, participant->muted);
+                    LOGD("Talker(%lu) set muted(%d)...\n", participant->user_id, participant->muted);
                 }                
             } else {
                 if (NULL == muted)
@@ -3198,19 +3193,11 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
                 json_object_set_new(info, "event", json_string("talked"));
                 json_object_set_new(info, "room", json_integer(pocroom->room_id));
                 json_object_set_new(info, "id", json_integer(pocroom->talker));
-				
-				// add 2019/05/13
-				struct timeval tv;
-				gettimeofday(&tv, NULL);
-				json_object_set_new(info, "timestamp", json_integer(tv.tv_sec * 1000 + tv.tv_usec/1000));
-				LOGD("[Uid: %llu]TALKED Time: %lld\n", user_id, tv.tv_sec * 1000 + tv.tv_usec/1000);
-				// end
-
                 gateway->notify_event(&janus_pocroom_plugin, session->handle, info);
             }
 
 			// add 设置打开talk录音文件 2019/04/26
-			LOGD("====> Set Talker(%llu), whether record_user(%d)...\n", pocroom->talker, pocroom->record_user);
+			LOGD("====> Set Talker(%lu), whether record_user(%d)...\n", pocroom->talker, pocroom->record_user);
 
 			if (pocroom->record_user) {
 				LOGD("[DEBUG] user(%lu) get talk...\n", pocroom->talker);
@@ -3249,6 +3236,14 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		json_object_set_new(response, "pocroom", json_string("talked"));
 		json_object_set_new(response, "id", json_integer(pocroom->talker));
 		json_object_set_new(response, "room", json_integer(room_id));
+        				
+		// add 2019/05/13
+		struct timeval tv;
+		gettimeofday(&tv, NULL);
+		json_object_set_new(response, "timestamp", json_integer(tv.tv_sec * 1000 + tv.tv_usec/1000));
+		LOGD("[Uid: %lu]TALKED Time: %lu\n", user_id, tv.tv_sec * 1000 + tv.tv_usec/1000);
+		// end
+
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "untalk")) {
 		JANUS_VALIDATE_JSON_OBJECT(root, untalk_parameters,
@@ -3287,9 +3282,9 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
         guint64 user_id = json_integer_value(user);
 
 		printf("=====Check Talker(%lu) User_ID(%lu) ......\n", pocroom->talker, user_id);
-		JANUS_LOG(LOG_ERR, "Cur Talker: (%llu) User_id(%llu)...\n", pocroom->talker, user_id);
+		JANUS_LOG(LOG_ERR, "Cur Talker: (%lu) User_id(%lu)...\n", pocroom->talker, user_id);
 
-		LOGD("Cur Talker: (%llu) User_id(%llu)...\n", pocroom->talker, user_id);
+		LOGD("Cur Talker: (%lu) User_id(%lu)...\n", pocroom->talker, user_id);
 		/* Useless request */
 		if(pocroom->talker == 0 || pocroom->talker != user_id) {
 			JANUS_LOG(LOG_ERR, "(%"SCNu64") no right to untalk\n", user_id);
@@ -3306,7 +3301,6 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
                 LOGD("try to upload file to fdfs ...\n");
 				janus_mutex_lock(&pocroom->fname_mutex);
 				file_metadata_storage(&pocroom->fdata);
-				// close_talk_file_and_request_storage(pocroom);
 				janus_mutex_unlock(&pocroom->fname_mutex);
 			}
 			// end
@@ -3316,7 +3310,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
             janus_pocroom_participant * talker = (janus_pocroom_participant *)session->participant;
             if (NULL != talker) {
                 talker->muted = true;
-                LOGD("Talker(%llu) untalk and set muted(%d)...\n", talker->user_id, talker->muted);
+                LOGD("Talker(%lu) untalk and set muted(%d)...\n", talker->user_id, talker->muted);
             }
             // end
             if(notify_events && gateway->events_is_enabled()) {
@@ -3324,14 +3318,6 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
                 json_object_set_new(info, "event", json_string("untalked"));
                 json_object_set_new(info, "room", json_integer(room_id));
                 json_object_set_new(info, "id", json_integer(pocroom->talker));
-
-				// add 2019/05/13
-				struct timeval tv;
-				gettimeofday(&tv, NULL);
-				json_object_set_new(info, "timestamp", json_integer(tv.tv_sec * 1000 + tv.tv_usec/1000));
-				LOGD("[Uid: %llu]UNTALKED Time: %lld\n", user_id, tv.tv_sec * 1000 + tv.tv_usec/1000);
-				// end
-
                 gateway->notify_event(&janus_pocroom_plugin, session->handle, info);
             }
 
@@ -3364,6 +3350,14 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		json_object_set_new(response, "pocroom", json_string("untalked"));
 		json_object_set_new(response, "id", json_integer(pocroom->talker));
 		json_object_set_new(response, "room", json_integer(room_id));
+
+		// add 2019/05/13
+		struct timeval tv;
+		gettimeofday(&tv, NULL);
+		json_object_set_new(response, "timestamp", json_integer(tv.tv_sec * 1000 + tv.tv_usec/1000));
+		LOGD("[Uid: %lu]TALKED Time: %lu\n", user_id, tv.tv_sec * 1000 + tv.tv_usec/1000);
+		// end
+
 		goto plugin_response;
 	} else if(!strcasecmp(request_text, "join") || !strcasecmp(request_text, "configure")
 			|| !strcasecmp(request_text, "changeroom") || !strcasecmp(request_text, "leave")) {
@@ -3475,12 +3469,6 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
 	if(!session || g_atomic_int_get(&session->destroyed) || !session->participant)
 		return;
 	janus_pocroom_participant *participant = (janus_pocroom_participant *)session->participant;
-
-// #if 1
-//     LOGD("==========>>>> participant->userid(%ld), active(%s), muted(%s), decoder(%s)",
-//         participant->user_id ,g_atomic_int_get(&participant->active)?"TRUE":"FALSE", participant->muted?"TRUE":"FALSE",
-//         participant->decoder?"have":"none");
-// #endif
 
 	if(!g_atomic_int_get(&participant->active) || participant->muted || !participant->decoder || !participant->room)
 		return;
@@ -3683,40 +3671,27 @@ void janus_pocroom_incoming_rtp(janus_plugin_session *handle, int video, char *b
               participant->user_id == participant->room->talker ? "TRUE":"FALSE");
 #endif
 		janus_pocroom_room * room = participant->room;
-		// LOGD("====>[%llu]rtp pkg: talker(%llu), user_id(%llu).\n", room->room_id, room->talker, participant->user_id);
+		// LOGD("====>[%lu]rtp pkg: talker(%lu), user_id(%lu).\n", room->room_id, room->talker, participant->user_id);
 		// add 存储用户音频数据 2019/04/26
 		if (participant->user_id == participant->room->talker && participant->room->record_user)
 		{
 			int samples = participant->room->sampling_rate/50;
-			opus_int32 buffer[OPUS_SAMPLES];
 			opus_int16 outBuffer[OPUS_SAMPLES];
 			opus_int16 * curBuffer = (opus_int16 *)pkt->data;
-
-			memset(buffer, 0, OPUS_SAMPLES*4);
 			memset(outBuffer, 0, OPUS_SAMPLES*2);
 
 			// LOGD("[DEBUG] Storage rtp data for user(%lu) in room(%lu), samples: %d ...\n", participant->user_id, participant->room->room_id, samples);
 			int i = 0;
 			for(i=0; i<samples; i++) {
-				buffer[i] += curBuffer[i];
-			}
-
-			for(i=0; i<samples; i++) {
 				/* FIXME Smoothen/Normalize instead of truncating? */
-				outBuffer[i] = buffer[i];
+				outBuffer[i] = curBuffer[i];
 			}
 
 			janus_mutex_lock(&participant->room->fname_mutex);
 			if (!file_metadata_write(&room->fdata, room->room_id, room->talker, (char *)outBuffer, sizeof(opus_int16) * samples)) {
-				LOGD("[Room: %llu][%llu]write metadata fail.\n", room->room_id, room->talker);
+				LOGD("[Room: %lu][%lu]write metadata fail.\n", room->room_id, room->talker);
 			}
 			janus_mutex_unlock(&participant->room->fname_mutex);
-
-// #if 1
-// 			janus_mutex_lock(&participant->room->fname_mutex);
-// 			write_talk_file(participant->room, (char *)outBuffer, sizeof(opus_int16) * samples);
-// 			janus_mutex_unlock(&participant->room->fname_mutex);
-// #endif
 		}
 		// end
 

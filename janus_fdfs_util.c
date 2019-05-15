@@ -266,7 +266,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
             /* 上传指定文件,且文件需要指定类型扩展名 */
             if (!is_file_exist(entity->file_path))
             {
-                //JANUS_LOG(LOG_WARN, "Error: file \"%s\" not exist\n", entity->file_path);
+                //JN_DBG_LOG("Error: file \"%s\" not exist\n", entity->file_path);
                 JN_DBG_LOG("Error: file \"%s\" not exist\n", entity->file_path);
                 janus_fdfs_item_free(entity);
                 continue;
@@ -282,7 +282,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
             ext_name = janus_fdfs_extname_get(entity->file_path, '.');
             if (NULL == ext_name)
             {
-                //JANUS_LOG(LOG_WARN, "Error: filename \"%s\" invalid\n", entity->file_path);
+                //JN_DBG_LOG("Error: filename \"%s\" invalid\n", entity->file_path);
                 JN_DBG_LOG("Error: filename \"%s\" invalid\n", entity->file_path);
                 janus_fdfs_item_free(entity);
                 continue;
@@ -292,7 +292,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
             {
                 /* 是否拼接成完整的url，这里默认没有 */
                 JN_DBG_LOG("==========>>>> upload file %s succefully, get filename url: %s:%d/%s\n", entity->file_path, storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
-                //JANUS_LOG(LOG_FATAL, "filename url: %s:%d/%s\n", storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
+                //JN_DBG_LOG("filename url: %s:%d/%s\n", storage_ip, DEFAULT_SERVICE_PORT, file_url_name);
                 /* 准备使用redis连接池写入fastDFS的文件存储信息 */
                 /* 增加url信息 */
                 fdfs_json = json_object();
@@ -307,7 +307,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
                     /* redis工作完毕 */
                     char *temp_string = json_dumps(fdfs_json, JSON_PRESERVE_ORDER);
                     if (NULL != temp_string) {
-                        //JANUS_LOG(LOG_DBG, "json value: %s\n", temp_string);
+                        //JN_DBG_LOG("json value: %s\n", temp_string);
                         JN_DBG_LOG("json value: %s\n", temp_string);
                         redis_flag = janus_push_im_fdfs_url(temp_string);
                         json_decref(fdfs_json);
@@ -319,7 +319,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
                 janus_fdfs_item_free(entity);
                 if (FALSE == redis_flag)
                 {
-                    //JANUS_LOG(LOG_WARN, "failed to write fdfs info into redis\n");
+                    //JN_DBG_LOG("failed to write fdfs info into redis\n");
                     JN_DBG_LOG("failed to write fdfs info %s into redis\n", entity->file_path);
                     continue;
                 }
@@ -340,7 +340,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
             }
             else //fail
             {
-                //LOGD("!!!!!!!! thread:%ld: failed to upload_file: %s\n", syscall(__NR_gettid), entity->file_path);
+                //JN_DBG_LOG("!!!!!!!! thread:%ld: failed to upload_file: %s\n", syscall(__NR_gettid), entity->file_path);
                 /* 重新连接fastdfs */
                 dfs_destroy();
                 if ((result = dfs_init(process_index, g_fdfs_context_ptr->fdfs_client_conf)) != 0)
@@ -352,7 +352,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
                     result = upload_file_by_filename(entity->file_path, ext_name, file_url_name, storage_ip);
                     if (0 != result)
                     {
-                        LOGD("!!!! FATAL !!!! thread:%ld: failed to upload_file again: %s\n", syscall(__NR_gettid), entity->file_path);
+                        JN_DBG_LOG("!!!! FATAL !!!! thread:%ld: failed to upload_file again: %s\n", syscall(__NR_gettid), entity->file_path);
                     }
                 }
                 /* 删除转换的mp3文件 */
@@ -362,7 +362,7 @@ static gpointer janus_fdfs_upload_handler(gpointer data)
                 /* 失败的上传推回去重做,这样就不能做上面的free操作 */
                 g_async_queue_lock(fdfs_request_async_queue);
                 JN_DBG_LOG("thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
-                JANUS_LOG(LOG_WARN, "thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
+                JN_DBG_LOG("thread:%ld: failed to upload_file\n", syscall(__NR_gettid));
                 g_async_queue_push_unlocked(fdfs_request_async_queue, entity);
                 g_async_queue_unlock(fdfs_request_async_queue);
 #endif

@@ -3039,13 +3039,13 @@ json_t *janus_plugin_handle_sdp(janus_plugin_session *plugin_session, janus_plug
 	}
 	int offer = 0;
 	if(!strcasecmp(sdp_type, "offer")) {
-		LOGD("===> [SDP][%llu] set webrtc_flags got offer ...\n", ice_handle->handle_id);
+		LOGD("===> [SDP][%lu] set webrtc_flags got offer ...\n", ice_handle->handle_id);
 		/* This is an offer from a plugin */
 		offer = 1;
 		janus_flags_set(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_OFFER);
 		janus_flags_clear(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_ANSWER);
 	} else if(!strcasecmp(sdp_type, "answer")) {
-		LOGD("===> [SDP][%llu] set webrtc_flags got answer ...\n", ice_handle->handle_id);
+		LOGD("===> [SDP][%lu] set webrtc_flags got answer ...\n", ice_handle->handle_id);
 		/* This is an answer from a plugin */
 		janus_flags_set(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_GOT_ANSWER);
 	} else {
@@ -4176,6 +4176,7 @@ gint main(int argc, char *argv[])
 
 #ifdef HAVE_SCTP
 	/* Initialize SCTP for DataChannels */
+	JANUS_LOG(LOG_INFO, "Initializing SCTP for Data Channels ...\n");
 	if(janus_sctp_init() < 0) {
 		exit(1);
 	}
@@ -4187,7 +4188,7 @@ gint main(int argc, char *argv[])
     JANUS_LOG(LOG_INFO, "Initializing redis connection pool...\n");
 	char redis_config[255];
 	g_snprintf(redis_config, 255, "%s/janus.transport.redis.jcfg", configs_folder);
-    JANUS_LOG(LOG_FATAL, "config_file: %s\n", redis_config);
+	JANUS_LOG(LOG_INFO, "config_file: %s\n", redis_config);
 	if (FALSE == janus_redispool_init(redis_config)) {
         JANUS_LOG(LOG_FATAL, "Error: janus redis connection init failed\n");
         exit(1);

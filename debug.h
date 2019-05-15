@@ -122,7 +122,7 @@ do {\
 	time_t t = tv.tv_sec; \
 	struct tm tms; \
 	localtime_r(&t, &tms); \
-	snprintf(time_buf, sizeof(time_buf), "[%d-%02d-%02d %02d:%02d:%02d.%03d]", tms.tm_year + 1900, tms.tm_mon+1, tms.tm_mday, tms.tm_hour, tms.tm_min, tms.tm_sec, tv.tv_usec/1000); \
+	snprintf(time_buf, sizeof(time_buf), "[%d-%02d-%02d %02d:%02d:%02d.%03ld]", tms.tm_year + 1900, tms.tm_mon+1, tms.tm_mday, tms.tm_hour, tms.tm_min, tms.tm_sec, tv.tv_usec/1000); \
 	snprintf(buf, sizeof(buf), "[%s:%s:%d]", __FILE__, __FUNCTION__, __LINE__); \
 	printf("[DEBUG]%s%s" format, time_buf, buf, ##__VA_ARGS__); \
 } while (0)

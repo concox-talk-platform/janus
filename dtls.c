@@ -1014,7 +1014,7 @@ gboolean janus_dtls_retry(gpointer stack) {
 		goto stoptimer;
 	}
 
-	LOGD("[%llu] DTLS stat(%d)...\n", handle->handle_id, dtls->dtls_state);
+	LOGD("[%lu] DTLS stat(%d)...\n", handle->handle_id, dtls->dtls_state);
 
 	if(janus_get_monotonic_time() - dtls->dtls_started >= 20*G_USEC_PER_SEC) {
 		/* FIXME Should we really give up after 20 seconds waiting for DTLS? */

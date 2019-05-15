@@ -23,7 +23,7 @@
 
 #define LDEBUG(format, ...) printf("[LAME][%s:%s:%d]" format, __FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
 
-encoder_t get_mp3_encoder() {
+encoder_t get_mp3_encoder(void) {
     return lame_init();
 }
 
@@ -160,7 +160,7 @@ END:
 void get_mp3_file_name(const char * pcm_path, char * buf, size_t len) {
     if (!pcm_path) return;
 
-    int sz = strlen(pcm_path);
+    size_t sz = strlen(pcm_path);
     
     if (sz > len) return;
 
