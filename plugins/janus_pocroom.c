@@ -1763,7 +1763,7 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 			/* We need a thread for the mix */
 			GError *error = NULL;
 			char tname[16];
-			g_snprintf(tname, sizeof(tname), "mixer %"SCNu64, pocroom->room_id);
+			g_snprintf(tname, sizeof(tname), "initmixer %"SCNu64, pocroom->room_id);
 			janus_refcount_increase(&pocroom->ref);
 			pocroom->thread = g_thread_try_new(tname, &janus_pocroom_mixer_thread, pocroom, &error);
 			if(error != NULL) {
@@ -1851,7 +1851,7 @@ int janus_pocroom_init(janus_callbacks *callback, const char *config_path) {
 					/* We need a thread for the mix */
 					GError *error = NULL;
 					char tname[16];
-					g_snprintf(tname, sizeof(tname), "mixer %"SCNu64, pocroom->room_id);
+					g_snprintf(tname, sizeof(tname), "rmixer %"SCNu64, pocroom->room_id);
 					janus_refcount_increase(&pocroom->ref);
 					pocroom->thread = g_thread_try_new(tname, &janus_pocroom_mixer_thread, pocroom, &error);
 					if(error != NULL) {
@@ -2328,7 +2328,7 @@ struct janus_plugin_result *janus_pocroom_handle_message(janus_plugin_session *h
 		/* We need a thread for the mix */
 		GError *error = NULL;
 		char tname[16];
-		g_snprintf(tname, sizeof(tname), "mixer %"SCNu64, pocroom->room_id);
+		g_snprintf(tname, sizeof(tname), "hmixer %"SCNu64, pocroom->room_id);
 		janus_refcount_increase(&pocroom->ref);
 		pocroom->thread = g_thread_try_new(tname, &janus_pocroom_mixer_thread, pocroom, &error);
 		if(error != NULL) {
@@ -4033,7 +4033,8 @@ static void *janus_pocroom_handler(void *data) {
 			participant->user_id = user_id;
 			g_free(participant->display);
 			participant->display = display_text ? g_strdup(display_text) : NULL;
-			participant->muted = muted ? json_is_true(muted) : FALSE;	/* By default, everyone's unmuted when joining */
+            		//participant->muted = muted ? json_is_true(muted) : FALSE;
+            		participant->muted = muted ? json_is_false(muted) : TRUE;	/* By default, everyone's unmuted when joining */
 			participant->volume_gain = volume;
 			participant->opus_complexity = complexity;
 			if(participant->outbuf == NULL)
@@ -4109,7 +4110,7 @@ static void *janus_pocroom_handler(void *data) {
 				g_snprintf(roomtrunc, sizeof(roomtrunc), "%"SCNu64, pocroom->room_id);
 				g_snprintf(parttrunc, sizeof(parttrunc), "%"SCNu64, participant->user_id);
 				char tname[16];
-				g_snprintf(tname, sizeof(tname), "mixer %s %s", roomtrunc, parttrunc);
+				g_snprintf(tname, sizeof(tname), "talker %s %s", roomtrunc, parttrunc);
 				janus_refcount_increase(&session->ref);
 				janus_refcount_increase(&participant->ref);
 				participant->thread = g_thread_try_new(tname, &janus_pocroom_participant_thread, participant, &error);
@@ -4855,7 +4856,7 @@ error:
 
 /* Thread to mix the contributions from all participants */
 static void *janus_pocroom_mixer_thread(void *data) {
-	JANUS_LOG(LOG_VERB, "Audio bridge thread starting...\n");
+	JANUS_LOG(LOG_VERB, "Pocroom Mixer thread starting...\n");
 	janus_pocroom_room *pocroom = (janus_pocroom_room *)data;
 	if(!pocroom) {
 		JANUS_LOG(LOG_ERR, "Invalid room!\n");
@@ -4929,6 +4930,7 @@ static void *janus_pocroom_mixer_thread(void *data) {
 	/* Loop */
 	int i=0;
 	int count = 0, rf_count = 0, prev_count = 0;
+	volatile gboolean talking = FALSE;
 	while(!g_atomic_int_get(&stopping) && !g_atomic_int_get(&pocroom->destroyed)) {
 		/* See if it's time to prepare a frame */
 		gettimeofday(&now, NULL);
@@ -4941,6 +4943,7 @@ static void *janus_pocroom_mixer_thread(void *data) {
 		passed = d_s*1000000 + d_us;
 		if(passed < 15000) {	/* Let's wait about 15ms at max */
 			g_usleep(5000);
+			/* 每15ms采样一次 */
 			continue;
 		}
 		/* Update the reference time */
@@ -4960,6 +4963,7 @@ static void *janus_pocroom_mixer_thread(void *data) {
 				JANUS_LOG(LOG_VERB, "Last user/forwarder just left room %"SCNu64", going idle...\n", pocroom->room_id);
 				prev_count = 0;
 			}
+			/* 只要room里面存在participant就会继续往下执行占用cpu上升 */
 			continue;
 		}
 		if(prev_count == 0) {
@@ -4976,6 +4980,11 @@ static void *janus_pocroom_mixer_thread(void *data) {
 		while(ps) {
 			janus_pocroom_participant *p = (janus_pocroom_participant *)ps->data;
 			janus_refcount_increase(&p->ref);
+			if (!p->muted) {
+				g_atomic_int_compare_and_exchange(&talking, FALSE, TRUE);
+			} else {
+				//g_atomic_int_compare_and_exchange(&talking, TRUE, FALSE);
+			}
 			ps = ps->next;
 		}
 		janus_mutex_unlock_nodebug(&pocroom->mutex);
@@ -5059,15 +5068,17 @@ static void *janus_pocroom_mixer_thread(void *data) {
 				/* FIXME Smoothen/Normalize instead of truncating? */
 				outBuffer[i] = sumBuffer[i];
 			/* Enqueue this mixed frame for encoding in the participant thread */
-			janus_pocroom_rtp_relay_packet *mixedpkt = g_malloc(sizeof(janus_pocroom_rtp_relay_packet));
-			mixedpkt->data = g_malloc(samples*2);
-			memcpy(mixedpkt->data, outBuffer, samples*2);
-			mixedpkt->length = samples;	/* We set the number of samples here, not the data length */
-			mixedpkt->timestamp = ts;
-			mixedpkt->seq_number = seq;
-			mixedpkt->ssrc = pocroom->room_id;
-			mixedpkt->silence = FALSE;
-			g_async_queue_push(p->outbuf, mixedpkt);
+			if (TRUE == talking) {
+				janus_pocroom_rtp_relay_packet *mixedpkt = g_malloc(sizeof(janus_pocroom_rtp_relay_packet));
+				mixedpkt->data = g_malloc(samples*2);
+				memcpy(mixedpkt->data, outBuffer, samples*2);
+				mixedpkt->length = samples;	/* We set the number of samples here, not the data length */
+				mixedpkt->timestamp = ts;
+				mixedpkt->seq_number = seq;
+				mixedpkt->ssrc = pocroom->room_id;
+				mixedpkt->silence = FALSE;
+				g_async_queue_push(p->outbuf, mixedpkt);
+			}
 			if(pkt) {
 				g_free(pkt->data);
 				pkt->data = NULL;
@@ -5131,6 +5142,7 @@ static void *janus_pocroom_mixer_thread(void *data) {
 				}
 			}
 		}
+		g_atomic_int_compare_and_exchange(&talking, TRUE, FALSE);
 		janus_mutex_unlock(&pocroom->rtp_mutex);
 	}
 	if(pocroom->recording) {
@@ -5206,6 +5218,8 @@ static void *janus_pocroom_participant_thread(void *data) {
 	outpkt->silence = FALSE;
 	unsigned char *payload = (unsigned char *)outpkt->data;
 
+	unsigned int pkts = 0;
+
 	janus_pocroom_rtp_relay_packet *mixedpkt = NULL;
 
 	/* Start working: check the outgoing queue for packets, then encode and send them */
@@ -5233,6 +5247,10 @@ static void *janus_pocroom_participant_thread(void *data) {
 					outpkt->timestamp = mixedpkt->timestamp;
 					outpkt->seq_number = mixedpkt->seq_number;
 					janus_pocroom_relay_rtp_packet(participant->session, outpkt);
+					pkts++;
+					if (pkts % 100 == 0) {
+						LOGD("room-%lu-talker-%lu, relay %u pkts\n", participant->room->room_id, participant->user_id, pkts);
+					}
 				}
 			}
 			g_free(mixedpkt->data);
@@ -5258,11 +5276,11 @@ static void janus_pocroom_relay_rtp_packet(gpointer data, gpointer user_data) {
 	}
 	janus_pocroom_session *session = (janus_pocroom_session *)data;
 	if(!session || !session->handle) {
-		// JANUS_LOG(LOG_ERR, "Invalid session...\n");
+		JANUS_LOG(LOG_ERR, "Invalid session...\n");
 		return;
 	}
 	if(!g_atomic_int_get(&session->started)) {
-		// JANUS_LOG(LOG_ERR, "Streaming not started yet for this session...\n");
+		JANUS_LOG(LOG_ERR, "Streaming not started yet for this session...\n");
 		return;
 	}
 	janus_pocroom_participant *participant = session->participant;
